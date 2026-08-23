@@ -1,3 +1,4 @@
+(() => {
 // MAIN-world transport bridge. It distinguishes short/background plumbing from
 // active network work without looking at page text or UI labels.
 //
@@ -16,14 +17,15 @@ const REALTIME_BURST_WINDOW_MS = 5_000;
 const REALTIME_BURST_THRESHOLD = 3;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-const controller = globalThis[CONTROLLER_KEY] ?? {
-  nextId: 1,
-  requests: new Map(),
-  streamIds: new WeakMap(),
-  readerIds: new WeakMap(),
-  realtimeMessages: [],
-  lastRealtimeProgressAt: 0
-};
+const controller = globalThis[CONTROLLER_KEY] ?? {};
+controller.nextId = Number.isFinite(controller.nextId) ? controller.nextId : 1;
+controller.requests = controller.requests instanceof Map ? controller.requests : new Map();
+controller.streamIds = controller.streamIds instanceof WeakMap ? controller.streamIds : new WeakMap();
+controller.readerIds = controller.readerIds instanceof WeakMap ? controller.readerIds : new WeakMap();
+controller.realtimeMessages = Array.isArray(controller.realtimeMessages) ? controller.realtimeMessages : [];
+controller.lastRealtimeProgressAt = Number.isFinite(controller.lastRealtimeProgressAt)
+  ? controller.lastRealtimeProgressAt
+  : 0;
 globalThis[CONTROLLER_KEY] = controller;
 globalThis.__TAB_SLEEP_PAGE_ACTIVITY_INSTALLED__ = true;
 
@@ -236,3 +238,4 @@ if (!globalThis[REALTIME_WRAPPED_KEY]) {
 
 window.addEventListener("__tab_sleep_bridge_ping__", () => publish("bridge:pong"));
 publish("bridge:init");
+})();

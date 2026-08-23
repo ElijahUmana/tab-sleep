@@ -53,6 +53,17 @@ function bridgeHarness() {
   return { c, context, fetchDeferreds, controller: context.__TAB_SLEEP_TRANSPORT_CONTROLLER__ };
 }
 
+test("reinjecting upgrades an existing controller without wrapping twice", () => {
+  const h = bridgeHarness();
+  const wrappedFetch = h.context.fetch;
+  delete h.controller.realtimeMessages;
+  delete h.controller.lastRealtimeProgressAt;
+  vm.runInNewContext(bridgeSource, h.context, { filename: "page-activity-bridge-reinject.js" });
+  assert.equal(h.context.fetch, wrappedFetch);
+  assert.deepEqual(Array.from(h.controller.realtimeMessages), []);
+  assert.equal(h.controller.lastRealtimeProgressAt, 0);
+});
+
 test("short fetch plumbing never reports busy", async () => {
   const h = bridgeHarness();
   const request = h.context.fetch("https://example.com/poll");

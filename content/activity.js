@@ -1,3 +1,4 @@
+(() => {
 // Each injection supersedes the previous tracker. Older callbacks self-retire
 // instead of accumulating work after an extension reload.
 globalThis.__TAB_SLEEP_GENERATION__ = (globalThis.__TAB_SLEEP_GENERATION__ ?? 0) + 1;
@@ -91,3 +92,4 @@ function heartbeat() {
   setTimeout(heartbeat, HEARTBEAT_INTERVAL_MS);
 }
 heartbeat();
+})();
