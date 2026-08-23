@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sleeping tab</title>
+  <link rel="stylesheet" href="preview.css">
+</head>
+<body>
+  <main id="preview" role="button" aria-label="Wake frozen page" tabindex="0">
+    <canvas id="snapshot" hidden aria-label="Frozen snapshot of the sleeping page"></canvas>
+    <iframe id="domSnapshot" hidden sandbox="" referrerpolicy="no-referrer" title="Frozen page content"></iframe>
+  </main>
+  <div id="wakeBar">
+    <span id="badge"><strong>Sleeping</strong><span id="meta">Click the frozen page to wake</span></span>
+  </div>
+  <div id="waking" hidden><span></span>Waking page…</div>
+  <script type="module" src="preview.js"></script>
+</body>
+</html>

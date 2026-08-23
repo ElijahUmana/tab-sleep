@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tab Sleep</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div class="brand-mark" aria-hidden="true">☾</div>
+      <div>
+        <h1>Tab Sleep</h1>
+        <p id="statusText">Loading…</p>
+      </div>
+      <label class="switch" aria-label="Enable Tab Sleep">
+        <input id="enabled" type="checkbox">
+        <span></span>
+      </label>
+    </header>
+
+    <section class="hero" aria-live="polite">
+      <div>
+        <strong id="sleepingCount">—</strong>
+        <span>tabs frozen</span>
+      </div>
+      <div>
+        <strong id="idleTime">2 min</strong>
+        <span>idle threshold</span>
+      </div>
+    </section>
+
+    <section class="current-tab">
+      <div>
+        <h2>This tab</h2>
+        <p id="currentTabDescription">Keep this page awake while you work.</p>
+      </div>
+      <label class="switch compact" aria-label="Keep this tab awake">
+        <input id="protected" type="checkbox">
+        <span></span>
+      </label>
+    </section>
+
+    <button id="sleepNow" class="primary" type="button">
+      <span aria-hidden="true">☾</span>
+      Freeze inactive tabs now
+    </button>
+
+    <div id="message" role="status" aria-live="polite"></div>
+
+    <footer>
+      <span id="totalCount">0 frozen total</span>
+      <button id="options" type="button">Settings</button>
+    </footer>
+  </main>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

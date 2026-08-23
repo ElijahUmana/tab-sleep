@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tab Sleep Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div class="mark" aria-hidden="true">☾</div>
+      <div>
+        <h1>Tab Sleep</h1>
+        <p>Freeze inactive tabs into viewable snapshots while releasing their live pages.</p>
+      </div>
+    </header>
+
+    <section>
+      <div class="section-heading">
+        <div>
+          <h2>Automatic sleep</h2>
+          <p>Tabs selected in open Chrome windows always stay awake.</p>
+        </div>
+        <label class="switch" aria-label="Enable automatic tab sleep">
+          <input id="enabled" type="checkbox">
+          <span></span>
+        </label>
+      </div>
+
+      <label class="field" for="idleMinutes">
+        <span>Sleep tabs after</span>
+        <div class="number-control">
+          <input id="idleMinutes" type="number" min="0.5" max="1440" step="0.5" required>
+          <span>minutes inactive</span>
+        </div>
+      </label>
+      <p class="hint">Tab Sleep evaluates eligible tabs every 5 seconds. Selecting a frozen tab shows its local frozen visual without loading the website; click anywhere on the visual to wake the live page.</p>
+    </section>
+
+    <section>
+      <h2>Safety rules</h2>
+      <p class="section-copy">Choose which tabs should remain loaded.</p>
+
+      <label class="check-row">
+        <div><strong>Pinned tabs</strong><span>Keep pinned tabs awake</span></div>
+        <input id="skipPinned" type="checkbox">
+      </label>
+      <label class="check-row">
+        <div><strong>Tabs playing audio</strong><span>Keep audible tabs awake</span></div>
+        <input id="skipAudible" type="checkbox">
+      </label>
+      <label class="check-row">
+        <div><strong>Protected by Chrome</strong><span>Respect tabs marked non-discardable</span></div>
+        <input id="respectAutoDiscardable" type="checkbox">
+      </label>
+      <label class="check-row">
+        <div><strong>Loading tabs</strong><span>Wait until navigation completes</span></div>
+        <input id="skipLoading" type="checkbox">
+      </label>
+    </section>
+
+    <section class="privacy">
+      <h2>How previews work</h2>
+      <p>When possible, Tab Sleep stores a full-resolution PNG of the last visible page. For never-visible background tabs, it creates a script-free best-effort DOM preview from a detached clone. Both stay local in this Chrome profile. Sleeping replaces the live website with a lightweight extension page; it does not discard that preview, so selecting the tab never reloads the original site.</p>
+    </section>
+
+    <footer>
+      <div id="saveStatus" role="status" aria-live="polite">Settings save automatically.</div>
+      <button id="restore" type="button">Restore defaults</button>
+    </footer>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>
