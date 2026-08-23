@@ -1,24 +1,30 @@
 // MAIN-world transport bridge. It distinguishes short/background plumbing from
-// an actively consumed streaming response without looking at page text or UI.
+// active network work without looking at page text or UI labels.
 //
-// Wrappers are installed exactly once per document. Reinjection only refreshes
-// the controller methods, so fetch/stream prototypes never accumulate layers.
+// Wrappers are installed exactly once per document. Reinjection refreshes the
+// controller methods, so fetch/stream/socket prototypes never accumulate layers.
 const CONTROLLER_KEY = "__TAB_SLEEP_TRANSPORT_CONTROLLER__";
 const FETCH_WRAPPED_KEY = "__TAB_SLEEP_FETCH_WRAPPED__";
 const STREAM_WRAPPED_KEY = "__TAB_SLEEP_STREAM_WRAPPED__";
+const RESPONSE_WRAPPED_KEY = "__TAB_SLEEP_RESPONSE_WRAPPED__";
+const REALTIME_WRAPPED_KEY = "__TAB_SLEEP_REALTIME_WRAPPED__";
 const REQUEST_MIN_BUSY_MS = 3_000;
 const REQUEST_MAX_BUSY_MS = 30_000;
 const STREAM_PROGRESS_GRACE_MS = 15_000;
+const REQUEST_PRUNE_MS = 5 * 60_000;
+const REALTIME_BURST_WINDOW_MS = 5_000;
+const REALTIME_BURST_THRESHOLD = 3;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 const controller = globalThis[CONTROLLER_KEY] ?? {
   nextId: 1,
   requests: new Map(),
   streamIds: new WeakMap(),
-  readerIds: new WeakMap()
+  readerIds: new WeakMap(),
+  realtimeMessages: [],
+  lastRealtimeProgressAt: 0
 };
 globalThis[CONTROLLER_KEY] = controller;
-
 globalThis.__TAB_SLEEP_PAGE_ACTIVITY_INSTALLED__ = true;
 
 function publish(source) {
@@ -34,6 +40,7 @@ controller.start = (method) => {
   controller.requests.set(id, {
     method: String(method || "GET").toUpperCase(),
     startedAt: Date.now(),
+    responseAttachedAt: 0,
     streamingConsumer: false,
     pendingReads: 0,
     lastProgressAt: 0
@@ -43,9 +50,12 @@ controller.start = (method) => {
 };
 
 controller.attachResponse = (id, response) => {
-  if (response?.body && controller.requests.has(id)) {
-    controller.streamIds.set(response.body, id);
-  }
+  const request = controller.requests.get(id);
+  if (!request) return;
+  request.responseAttachedAt = Date.now();
+  if (response?.body) controller.streamIds.set(response.body, id);
+  else controller.finish(id, "request:no-body");
+  publish("request:headers");
 };
 
 controller.markStreamingConsumer = (id) => {
@@ -78,16 +88,43 @@ controller.finish = (id, source = "request:end") => {
   publish(source);
 };
 
+controller.noteRealtimeMessage = () => {
+  const now = Date.now();
+  controller.realtimeMessages = controller.realtimeMessages
+    .filter((at) => now - at <= REALTIME_BURST_WINDOW_MS);
+  controller.realtimeMessages.push(now);
+  if (controller.realtimeMessages.length >= REALTIME_BURST_THRESHOLD) {
+    controller.lastRealtimeProgressAt = now;
+  }
+  publish("realtime:message");
+};
+
 controller.busy = () => {
   const now = Date.now();
-  for (const request of controller.requests.values()) {
+  for (const [id, request] of controller.requests) {
     const elapsed = now - request.startedAt;
+    const safeMethod = SAFE_METHODS.has(request.method);
     if (elapsed >= REQUEST_MIN_BUSY_MS && elapsed <= REQUEST_MAX_BUSY_MS) return true;
-    const activeStream = request.streamingConsumer && !SAFE_METHODS.has(request.method);
-    if (activeStream && request.pendingReads > 0) return true;
-    if (activeStream && now - request.lastProgressAt <= STREAM_PROGRESS_GRACE_MS) return true;
+
+    if (!safeMethod) {
+      // A POST/PUT/PATCH/DELETE that has not returned headers is still real
+      // work. Once headers arrive, it remains work while its body is actively
+      // consumed; an ignored response expires rather than pinning forever.
+      if (!request.responseAttachedAt) return true;
+      if (request.pendingReads > 0) return true;
+      if (request.streamingConsumer && now - request.lastProgressAt <= STREAM_PROGRESS_GRACE_MS) return true;
+      if (now - request.responseAttachedAt <= REQUEST_MAX_BUSY_MS) return true;
+    } else if (request.streamingConsumer && now - request.lastProgressAt <= STREAM_PROGRESS_GRACE_MS) {
+      // GET long-polls become stale; an actually progressing GET stream remains
+      // awake as chunks are consumed.
+      return true;
+    }
+
+    const referenceAt = request.lastProgressAt || request.responseAttachedAt || request.startedAt;
+    if (now - referenceAt > REQUEST_PRUNE_MS) controller.requests.delete(id);
   }
-  return false;
+
+  return now - controller.lastRealtimeProgressAt <= STREAM_PROGRESS_GRACE_MS;
 };
 
 if (!globalThis[FETCH_WRAPPED_KEY] && typeof globalThis.fetch === "function") {
@@ -102,7 +139,6 @@ if (!globalThis[FETCH_WRAPPED_KEY] && typeof globalThis.fetch === "function") {
     try {
       const response = await originalFetch.apply(this, args);
       activeController.attachResponse(id, response);
-      if (!response?.body) activeController.finish(id);
       return response;
     } catch (error) {
       activeController.finish(id, "request:error");
@@ -140,6 +176,59 @@ if (!globalThis[STREAM_WRAPPED_KEY] && typeof ReadableStream !== "undefined") {
       } catch (error) {
         activeController.finish(id, "stream:error");
         throw error;
+      }
+    };
+  }
+  if (readerPrototype?.cancel) {
+    const originalCancel = readerPrototype.cancel;
+    readerPrototype.cancel = async function(...args) {
+      const activeController = globalThis[CONTROLLER_KEY];
+      const id = activeController.readerIds.get(this);
+      try {
+        return await originalCancel.apply(this, args);
+      } finally {
+        if (id !== undefined) activeController.finish(id, "stream:cancel");
+      }
+    };
+  }
+}
+
+if (!globalThis[RESPONSE_WRAPPED_KEY] && typeof Response !== "undefined") {
+  globalThis[RESPONSE_WRAPPED_KEY] = true;
+  for (const method of ["arrayBuffer", "blob", "bytes", "formData", "json", "text"]) {
+    const original = Response.prototype[method];
+    if (typeof original !== "function") continue;
+    Response.prototype[method] = async function(...args) {
+      const activeController = globalThis[CONTROLLER_KEY];
+      const id = this.body ? activeController.streamIds.get(this.body) : undefined;
+      if (id === undefined) return original.apply(this, args);
+      activeController.markStreamingConsumer(id);
+      try {
+        return await original.apply(this, args);
+      } finally {
+        activeController.finish(id, `response:${method}`);
+      }
+    };
+  }
+}
+
+if (!globalThis[REALTIME_WRAPPED_KEY]) {
+  globalThis[REALTIME_WRAPPED_KEY] = true;
+  const OriginalWebSocket = globalThis.WebSocket;
+  if (typeof OriginalWebSocket === "function") {
+    globalThis.WebSocket = class extends OriginalWebSocket {
+      constructor(...args) {
+        super(...args);
+        this.addEventListener("message", () => globalThis[CONTROLLER_KEY].noteRealtimeMessage());
+      }
+    };
+  }
+  const OriginalEventSource = globalThis.EventSource;
+  if (typeof OriginalEventSource === "function") {
+    globalThis.EventSource = class extends OriginalEventSource {
+      constructor(...args) {
+        super(...args);
+        this.addEventListener("message", () => globalThis[CONTROLLER_KEY].noteRealtimeMessage());
       }
     };
   }

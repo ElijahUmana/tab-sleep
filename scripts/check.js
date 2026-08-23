@@ -95,7 +95,7 @@ assert(!previewJs.includes("wakeButton"), "wake must not require a separate butt
 const bridgeSource = readFileSync(resolve(root, "content/page-activity-bridge.js"), "utf8");
 assert(bridgeSource.includes("ReadableStreamDefaultReader"), "streaming response consumption must be tracked");
 assert(bridgeSource.includes("STREAM_PROGRESS_GRACE_MS"), "stream progress must protect long responses");
-assert(!bridgeSource.includes("WebSocket"), "persistent sockets must not pin tabs awake");
+assert(bridgeSource.includes("REALTIME_BURST_THRESHOLD"), "realtime traffic must require an active message burst");
 
 const readme = readFileSync(resolve(root, "README.md"), "utf8");
 assert(readme.includes("## Installation"), "README must include installation instructions");
