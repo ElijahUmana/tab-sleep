@@ -16,15 +16,19 @@ const fields = {
 };
 const status = document.querySelector("#saveStatus");
 const restore = document.querySelector("#restore");
-let saveTimer = null;
+let numberSaveTimer = null;
+
+function setBusy(value) {
+  document.body.toggleAttribute("aria-busy", value);
+  for (const element of Object.values(fields)) element.disabled = value;
+  restore.disabled = value;
+}
 
 function render(settings) {
   for (const [key, element] of Object.entries(fields)) {
-    if (element.type === "checkbox") {
-      element.checked = settings[key];
-    } else {
-      element.value = String(settings[key]);
-    }
+    element[element.type === "checkbox" ? "checked" : "value"] = element.type === "checkbox"
+      ? settings[key]
+      : String(settings[key]);
   }
 }
 
@@ -39,46 +43,76 @@ function readSettings() {
   });
 }
 
-async function save() {
-  const rawIdleMinutes = Number(fields.idleMinutes.value);
-  if (!Number.isFinite(rawIdleMinutes) || rawIdleMinutes < MIN_IDLE_MINUTES || rawIdleMinutes > MAX_IDLE_MINUTES) {
-    status.textContent = `Enter a value from ${MIN_IDLE_MINUTES} to ${MAX_IDLE_MINUTES} minutes.`;
-    status.dataset.kind = "error";
-    return;
-  }
+function validIdleMinutes() {
+  const value = Number(fields.idleMinutes.value);
+  const halfMinuteSteps = Number.isInteger(value * 2);
+  return Number.isFinite(value) && value >= MIN_IDLE_MINUTES && value <= MAX_IDLE_MINUTES && halfMinuteSteps;
+}
 
+async function save() {
+  if (!validIdleMinutes()) {
+    status.textContent = `Enter ${MIN_IDLE_MINUTES}–${MAX_IDLE_MINUTES} minutes in 0.5-minute increments.`;
+    status.dataset.kind = "error";
+    return false;
+  }
   const settings = readSettings();
   await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
   render(settings);
   status.textContent = "Saved.";
   status.dataset.kind = "success";
+  return true;
 }
 
-function scheduleSave() {
-  status.textContent = "Saving…";
-  status.dataset.kind = "";
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    void save().catch((error) => {
-      status.textContent = error.message;
-      status.dataset.kind = "error";
-    });
-  }, 200);
+function reportError(error) {
+  status.textContent = `Could not save settings: ${error.message}`;
+  status.dataset.kind = "error";
 }
 
 for (const element of Object.values(fields)) {
-  element.addEventListener("change", scheduleSave);
   if (element.type === "number") {
-    element.addEventListener("input", scheduleSave);
+    element.addEventListener("input", () => {
+      status.textContent = "Saving…";
+      status.dataset.kind = "";
+      clearTimeout(numberSaveTimer);
+      numberSaveTimer = setTimeout(() => void save().catch(reportError), 200);
+    });
+    element.addEventListener("change", () => {
+      clearTimeout(numberSaveTimer);
+      void save().catch(reportError);
+    });
+  } else {
+    element.addEventListener("change", () => void save().catch(reportError));
   }
 }
 
-restore.addEventListener("click", async () => {
-  await chrome.storage.local.set({ [SETTINGS_KEY]: { ...DEFAULT_SETTINGS } });
-  render(DEFAULT_SETTINGS);
-  status.textContent = "Defaults restored.";
-  status.dataset.kind = "success";
+window.addEventListener("pagehide", () => {
+  if (!numberSaveTimer || !validIdleMinutes()) return;
+  clearTimeout(numberSaveTimer);
+  numberSaveTimer = null;
+  void chrome.storage.local.set({ [SETTINGS_KEY]: readSettings() });
 });
 
-const stored = await chrome.storage.local.get(SETTINGS_KEY);
-render(normalizeSettings(stored[SETTINGS_KEY]));
+restore.addEventListener("click", async () => {
+  setBusy(true);
+  try {
+    await chrome.storage.local.set({ [SETTINGS_KEY]: { ...DEFAULT_SETTINGS } });
+    render(DEFAULT_SETTINGS);
+    status.textContent = "Defaults restored.";
+    status.dataset.kind = "success";
+  } catch (error) {
+    reportError(error);
+  } finally {
+    setBusy(false);
+  }
+});
+
+setBusy(true);
+try {
+  const stored = await chrome.storage.local.get(SETTINGS_KEY);
+  render(normalizeSettings(stored[SETTINGS_KEY]));
+} catch (error) {
+  status.textContent = `Could not load settings: ${error.message}`;
+  status.dataset.kind = "error";
+} finally {
+  setBusy(false);
+}

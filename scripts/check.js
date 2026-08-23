@@ -42,6 +42,7 @@ const scripts = [
   "content/page-activity-bridge.js",
   "tests/fake-chrome.js",
   "tests/bridge.test.js",
+  "tests/constants.test.js",
   "tests/policy.test.js",
   "tests/engine.test.js"
 ];
@@ -83,13 +84,15 @@ assert(engineSource.includes('content/page-activity-bridge.js'), "engine must in
 assert(engineSource.includes("captureDomSnapshot"), "engine must fall back to an exact DOM snapshot for tabs without a bitmap capture");
 
 const previewHtml = readFileSync(resolve(root, "preview/preview.html"), "utf8");
-assert(previewHtml.includes('sandbox=""'), "DOM snapshot iframe must be fully sandboxed (no scripts)");
+assert(previewHtml.includes('sandbox="allow-same-origin"'), "DOM snapshot iframe may expose its inert document for scroll restoration");
+assert(!previewHtml.includes("allow-scripts"), "DOM snapshot iframe must never execute scripts");
 const previewJs = readFileSync(resolve(root, "preview/preview.js"), "utf8");
 assert(previewJs.includes("srcdoc"), "preview must render DOM snapshots via srcdoc");
 assert(previewJs.includes("void loadPreview()"), "preview must start loading its stored visual");
 assert(previewJs.includes('type: "PREVIEW_READY"'), "preview must confirm the frozen visual painted");
 assert(previewJs.includes('preview.addEventListener("click"'), "clicking anywhere on the frozen visual must wake the page");
-assert(previewJs.includes("event.isTrusted"), "tab activation/synthetic clicks must not wake the page");
+assert(previewJs.includes("event.isTrusted"), "tab activation/synthetic clicks and keys must not wake the page");
+assert(previewJs.includes("scrollTo(record.scrollX"), "DOM previews must restore recorded scroll position");
 assert(!previewJs.includes("wakeButton"), "wake must not require a separate button");
 
 const bridgeSource = readFileSync(resolve(root, "content/page-activity-bridge.js"), "utf8");

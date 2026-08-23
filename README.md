@@ -136,7 +136,7 @@ npm test
 npm run check
 ```
 
-`npm test` covers policy, engine lifecycle races, preview preservation and recovery, request plumbing, and long streaming-response protection.
+`npm test` covers policy, engine lifecycle races, preview preservation and recovery, settings normalization, request plumbing, and long streaming-response protection.
 
 `npm run check` validates:
 
@@ -190,4 +190,4 @@ Tab Sleep does not sync preview records or send them to an application server. F
 
 ## Version
 
-Current version: **4.1.0**
+Current version: **4.1.1**

@@ -96,6 +96,15 @@ test("hidden quiet tab without bitmap screenshot freezes via exact DOM snapshot"
   const woken = await e.wake(token, await chrome.tabs.get(1));
   assert.equal(woken.url, "https://example.com/tab-1");
 });
+test("final freeze revalidates a minimized window becoming visible", async () => {
+  const c=clock(), options={windowStates:{1:"normal",2:"minimized"},signals:{1:{visible:true},2:{visible:false,domSnapshot:true}},local:{[SETTINGS_KEY]:{enabled:true,idleMinutes:0.5,skipPinned:true,skipAudible:true,respectAutoDiscardable:true,skipLoading:true}}};
+  const chrome=createFakeChrome([makeTab(1,{active:true,windowId:1}),makeTab(2,{active:true,windowId:2})],options); const e=engine(chrome,c); await e.start();
+  await e.handleSignal({visible:false,busy:false,activity:false,bridgeReady:true},await chrome.tabs.get(2)); c.advance(120_000); await e.handleSignal({visible:false,busy:false,activity:false,bridgeReady:true},await chrome.tabs.get(2));
+  options.windowStates[2]="normal";
+  assert.equal(await e.freeze(await chrome.tabs.get(2),await e.settings(),false),false);
+  assert.equal(chrome.tabsData[1].url,"https://example.com/tab-2");
+});
+
 test("selected tab of a minimized window may sleep; of open window never", async () => {
   // Two windows, each with a selected tab. Window 2 is minimized — its
   // selected tab is genuinely not visible and may sleep. Window 1 is open —
@@ -151,6 +160,15 @@ test("delayed old-URL update cannot delete a sleeping preview record", async () 
   await e.handleUpdated(1,{url:"https://example.com/tab-1"},{...(await chrome.tabs.get(1)),url:"https://example.com/tab-1",pendingUrl:previewUrl});
   assert.ok(chrome.storage.local.data[previewStorageKey(token)]);
   assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"].status,"sleeping");
+});
+
+test("pending preview URL resolves token before stale committed URL", async () => {
+  const c=clock(), chrome=createFakeChrome([makeTab(1)]); const e=engine(chrome,c); await e.start();
+  const token="pending-token", previewUrl=`chrome-extension://tab-sleep-test/preview/preview.html?token=${token}`;
+  const state=chrome.storage.session.data[RUNTIME_STATE_KEY]; state.frozenTabs["1"]={token,originalUrl:"https://example.com/tab-1",status:"freezing"}; await chrome.storage.session.set({[RUNTIME_STATE_KEY]:state});
+  chrome.tabsData[0].pendingUrl=previewUrl;
+  const resolved=await e.resolvePreviewTab(token,{...chrome.tabsData[0],url:"https://example.com/tab-1",pendingUrl:previewUrl});
+  assert.equal(resolved.id,1);
 });
 
 test("preview navigation transition preserves its snapshot record", async () => {

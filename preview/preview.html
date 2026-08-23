@@ -9,12 +9,12 @@
 <body>
   <main id="preview" role="button" aria-label="Wake frozen page" tabindex="0">
     <canvas id="snapshot" hidden aria-label="Frozen snapshot of the sleeping page"></canvas>
-    <iframe id="domSnapshot" hidden sandbox="" referrerpolicy="no-referrer" title="Frozen page content"></iframe>
+    <iframe id="domSnapshot" hidden sandbox="allow-same-origin" referrerpolicy="no-referrer" title="Frozen page content"></iframe>
   </main>
-  <div id="wakeBar">
+  <div id="wakeBar" role="status" aria-live="polite">
     <span id="badge"><strong>Sleeping</strong><span id="meta">Click the frozen page to wake</span></span>
   </div>
-  <div id="waking" hidden><span></span>Waking page…</div>
+  <div id="waking" hidden role="status" aria-live="assertive"><span></span>Waking page…</div>
   <script type="module" src="preview.js"></script>
 </body>
 </html>

@@ -59,6 +59,9 @@ async function loadPreview() {
       domSnapshot.addEventListener("load", resolve, { once: true });
       domSnapshot.srcdoc = record.html;
     });
+    try {
+      domSnapshot.contentWindow?.scrollTo(record.scrollX ?? 0, record.scrollY ?? 0);
+    } catch {}
     domSnapshot.hidden = false;
     snapshot.hidden = true;
     meta.textContent = formatCapturedAt(record.capturedAt);
@@ -88,6 +91,7 @@ preview.addEventListener("click", (event) => {
   void wake();
 });
 preview.addEventListener("keydown", (event) => {
+  if (!event.isTrusted) return;
   if (event.key === "Enter" || event.key === " ") {
     event.preventDefault();
     void wake();

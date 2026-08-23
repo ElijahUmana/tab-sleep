@@ -8,6 +8,7 @@
   --accent: #6d5dfc;
   --accent-strong: #5443ed;
   --accent-soft: #efedff;
+  --on-accent: #ffffff;
   --error: #b42318;
   --success: #087443;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -23,6 +24,7 @@
     --accent: #9589ff;
     --accent-strong: #aaa1ff;
     --accent-soft: #2d294c;
+    --on-accent: #17132b;
     --error: #ff8d84;
     --success: #63d9a1;
   }
@@ -53,7 +55,7 @@ header {
   height: 42px;
   border-radius: 14px;
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
   font-size: 26px;
   line-height: 1;
   box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 30%, transparent);
@@ -141,12 +143,14 @@ button { font: inherit; }
   border: 0;
   border-radius: 13px;
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
   font-weight: 650;
   cursor: pointer;
   transition: 140ms ease;
 }
 .primary:hover:not(:disabled) { background: var(--accent-strong); transform: translateY(-1px); }
+.primary:focus-visible,
+footer button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .primary:disabled { opacity: .48; cursor: not-allowed; }
 
 #message {
@@ -176,6 +180,8 @@ footer {
   font-size: 11px;
 }
 footer button {
+  min-height: 44px;
+  padding: 0 8px;
   border: 0;
   background: transparent;
   color: var(--accent);
