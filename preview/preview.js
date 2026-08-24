@@ -1,3 +1,5 @@
+import { PreviewStore } from "../lib/preview-store.js";
+
 const params = new URLSearchParams(location.search);
 const token = params.get("token");
 const preview = document.querySelector("#preview");
@@ -28,6 +30,14 @@ async function reportReady(kind) {
 // in the background so a huge page still shows its top instantly.
 async function renderTiledPreview(record) {
   const tileRecords = [...record.tiles].sort((a, b) => a.index - b.index);
+  if (!(record.width > 0)) {
+    const firstBitmap = await createImageBitmap(tileRecords[0].blob);
+    record.width = firstBitmap.width;
+    firstBitmap.close();
+  }
+  if (!(record.height > 0)) {
+    record.height = tileRecords.reduce((maximum, tile) => Math.max(maximum, tile.y + tile.height), 0);
+  }
   snapshot.width = record.width;
   snapshot.height = record.height;
   const context = snapshot.getContext("2d", { alpha: false });
@@ -55,28 +65,33 @@ const FULL_TILE_FALLBACK_HEIGHT = 4_096;
 
 async function loadPreview() {
   if (!token) throw new Error("Missing preview token");
-  const response = await chrome.runtime.sendMessage({ type: "PREVIEW_GET_RECORD", token });
-  if (response?.__tabSleepError) throw new Error(response.__tabSleepError);
-  record = response;
-  if (!record) {
-    throw new Error("Frozen record missing");
+  const store = new PreviewStore();
+  const stored = await store.getPreview(token);
+  let metadata = stored?.metadata ?? null;
+  let images = stored?.images ?? [];
+  if (!metadata) {
+    // The worker is the only legacy-storage owner. Asking for metadata may
+    // migrate one named 4.x token into IndexedDB; image Blobs are then read
+    // locally below instead of crossing runtime messaging, which JSON-strips
+    // them in real Chrome.
+    const response = await chrome.runtime.sendMessage({ type: "PREVIEW_GET_RECORD", token });
+    if (response?.__tabSleepError) throw new Error(response.__tabSleepError);
+    const migrated = await store.getPreview(token);
+    metadata = migrated?.metadata ?? response ?? null;
+    images = migrated?.images ?? [];
   }
+  if (!metadata) throw new Error("Frozen record missing");
+  record = {
+    ...metadata,
+    tiles: images.some((image) => image.kind === "tile")
+      ? images.map((image, index) => ({ index: image.tileIndex ?? index, y: image.yOffset ?? 0, height: image.height ?? 0, blob: image.blob, mime: image.mime }))
+      : undefined,
+    viewportImage: images.find((image) => image.kind === "viewport")?.blob ?? null
+  };
 
   document.title = `💤 ${record.title || "Sleeping tab"}`;
 
-  // Migrated/legacy records still carry a Base64 data URL in storage.local;
-  // store-backed records deliver a decoded viewport PNG Blob instead.
-  let viewportBitmapSource = null;
-  if (typeof record.imageDataUrl === "string" && record.imageDataUrl.startsWith("data:image/")) {
-    const comma = record.imageDataUrl.indexOf(",");
-    if (comma < 0) throw new Error("Frozen image data is malformed");
-    const binary = atob(record.imageDataUrl.slice(comma + 1));
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
-    viewportBitmapSource = new Blob([bytes], { type: "image/png" });
-  } else if (record.viewportImage instanceof Blob) {
-    viewportBitmapSource = record.viewportImage;
-  }
+  let viewportBitmapSource = record.viewportImage instanceof Blob ? record.viewportImage : null;
   if (viewportBitmapSource) {
     const bitmap = await createImageBitmap(viewportBitmapSource);
     snapshot.width = bitmap.width;

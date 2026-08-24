@@ -31,6 +31,8 @@ test("savePreview commits metadata and blob transactionally and reads back", asy
   const saved = await store.savePreview(viewportPreview());
   assert.equal(saved.schemaVersion, SCHEMA_VERSION);
   assert.equal(saved.originalUrl, "https://example.com/a");
+  assert.equal(saved.width, 0);
+  assert.equal(saved.height, 0);
   assert.equal(saved.images.length, 1);
 
   const full = await store.getPreview("token-a");

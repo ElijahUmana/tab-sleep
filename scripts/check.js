@@ -108,6 +108,7 @@ const previewHtml = readFileSync(resolve(root, "preview/preview.html"), "utf8");
 assert(previewHtml.includes('sandbox="allow-same-origin"'), "DOM snapshot iframe may expose its inert document for scroll restoration");
 assert(!previewHtml.includes("allow-scripts"), "DOM snapshot iframe must never execute scripts");
 const previewJs = readFileSync(resolve(root, "preview/preview.js"), "utf8");
+assert(previewJs.includes("new PreviewStore()"), "preview must read image Blobs directly from same-origin IndexedDB");
 assert(previewJs.includes("srcdoc"), "preview must render DOM snapshots via srcdoc");
 assert(previewJs.includes("void loadWhenVisible()"), "preview must defer legacy/image loading until the frozen tab is visible");
 assert(!previewJs.includes("chrome.storage.local.get"), "preview page must never bypass the bounded preview-store read path");
