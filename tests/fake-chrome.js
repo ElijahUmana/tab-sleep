@@ -7,7 +7,14 @@ function select(data, keys) {
 }
 function area(initial = {}) {
   const data = clone(initial);
-  return { data, async get(keys) { return select(data, keys); }, async set(values) { Object.assign(data, clone(values)); }, async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) delete data[key]; }, async clear() { for (const key of Object.keys(data)) delete data[key]; } };
+  return {
+    data,
+    async get(keys) { return select(data, keys); },
+    async getKeys() { return Object.keys(data); },
+    async set(values) { Object.assign(data, clone(values)); },
+    async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) delete data[key]; },
+    async clear() { for (const key of Object.keys(data)) delete data[key]; }
+  };
 }
 function matches(tab, query) {
   if (query.active !== undefined && tab.active !== query.active) return false;

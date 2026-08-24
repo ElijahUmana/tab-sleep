@@ -37,6 +37,38 @@ async function makeReady(e, chrome, c, id, { busy = false } = {}) {
   state.signals[String(id)].lastActivityAt = state.captures[String(id)].capturedAt;
   await chrome.storage.session.set({ [RUNTIME_STATE_KEY]: state });
 }
+test("engine startup never enumerates or decodes legacy preview payloads", async () => {
+  const c = clock();
+  const chrome = createFakeChrome([makeTab(1, { active: true })], {
+    signals: { 1: { visible: true } },
+    local: {
+      "preview:large-legacy": {
+        token: "large-legacy",
+        originalUrl: "https://example.com/legacy",
+        title: "Large legacy",
+        imageDataUrl: "data:image/png;base64,AAAA"
+      }
+    }
+  });
+  let getKeysCalls = 0;
+  let legacyReads = 0;
+  const originalGetKeys = chrome.storage.local.getKeys;
+  const originalGet = chrome.storage.local.get;
+  chrome.storage.local.getKeys = async () => { getKeysCalls++; return originalGetKeys(); };
+  chrome.storage.local.get = async (keys) => {
+    if (keys === "preview:large-legacy" || keys === null) legacyReads++;
+    return originalGet(keys);
+  };
+  const previewStore = new PreviewStore({ indexedDb: new FakeIndexedDbFactory(), legacyStorageArea: chrome.storage.local });
+  const e = new TabSleepEngine(chrome, c.now, () => "token-startup", { previewStore });
+  if (chrome.testOptions) chrome.testOptions.engineRef = { current: e };
+
+  await e.start();
+
+  assert.equal(getKeysCalls, 0, "startup must not enumerate legacy preview keys");
+  assert.equal(legacyReads, 0, "startup must not materialize legacy preview payloads");
+});
+
 test("three tiled visible active tabs never freeze", async () => {
   const c = clock(), chrome = createFakeChrome([makeTab(1,{active:true,windowId:1}),makeTab(2,{active:true,windowId:2}),makeTab(3,{active:true,windowId:3})], { signals: { 1:{visible:true},2:{visible:true},3:{visible:true} } });
   const e=engine(chrome,c); await e.start(); c.advance(600_000); const result=await e.scan(); assert.deepEqual(result.frozen,[]);

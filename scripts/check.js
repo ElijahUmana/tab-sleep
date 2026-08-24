@@ -92,6 +92,12 @@ assert(engineSource.includes('content/page-activity-bridge.js'), "engine must in
 assert(engineSource.includes("captureDomSnapshot"), "engine must fall back to an exact DOM snapshot for tabs without a bitmap capture");
 assert(engineSource.includes("captureFullPage"), "engine must attempt an entire-scrollable-page capture before falling back");
 
+const previewStoreSource = readFileSync(resolve(root, "lib/preview-store.js"), "utf8");
+assert(previewStoreSource.includes("migrateLegacyToken"), "legacy previews must migrate one named token on demand");
+assert(previewStoreSource.includes("storageArea.getKeys()"), "explicit legacy maintenance must enumerate keys without materializing all storage");
+assert(!previewStoreSource.includes("storageArea.get(null)"), "legacy preview migration must never read the complete storage area into memory");
+assert(!engineSource.includes("migratePreviewRecords"), "extension startup must never bulk-migrate legacy preview payloads");
+
 const fullPageSource = readFileSync(resolve(root, "lib/full-page-capture.js"), "utf8");
 assert(fullPageSource.includes("chrome.debugger") || fullPageSource.includes("debugger.sendCommand"), "full-page capture must use the debugger protocol");
 assert(fullPageSource.includes("captureBeyondViewport"), "full-page capture must screenshot beyond the viewport");
@@ -103,7 +109,8 @@ assert(previewHtml.includes('sandbox="allow-same-origin"'), "DOM snapshot iframe
 assert(!previewHtml.includes("allow-scripts"), "DOM snapshot iframe must never execute scripts");
 const previewJs = readFileSync(resolve(root, "preview/preview.js"), "utf8");
 assert(previewJs.includes("srcdoc"), "preview must render DOM snapshots via srcdoc");
-assert(previewJs.includes("void loadPreview()"), "preview must start loading its stored visual");
+assert(previewJs.includes("void loadWhenVisible()"), "preview must defer legacy/image loading until the frozen tab is visible");
+assert(!previewJs.includes("chrome.storage.local.get"), "preview page must never bypass the bounded preview-store read path");
 assert(previewJs.includes('type: "PREVIEW_READY"'), "preview must confirm the frozen visual painted");
 assert(previewJs.includes('preview.addEventListener("click"'), "clicking anywhere on the frozen visual must wake the page");
 assert(previewJs.includes("event.isTrusted"), "tab activation/synthetic clicks and keys must not wake the page");

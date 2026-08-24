@@ -90,14 +90,51 @@ test("oversized single capture fails loudly instead of truncating", async () => 
   await assert.rejects(() => store.savePreview(viewportPreview()), /exceeds per-tab limit/);
 });
 
+test("legacy preview migrates only when its exact token is opened", async () => {
+  const backing = new Map([[`${PREVIEW_KEY_PREFIX}legacy-on-demand`, {
+    token: "legacy-on-demand",
+    originalUrl: "https://example.com/on-demand",
+    title: "On demand",
+    imageDataUrl: PNG_A,
+    capturedAt: 10,
+    frozenAt: 11
+  }]]);
+  let getKeysCalls = 0;
+  const payloadReads = [];
+  const storageArea = {
+    async get(key) {
+      payloadReads.push(key);
+      return backing.has(key) ? { [key]: structuredClone(backing.get(key)) } : {};
+    },
+    async getKeys() { getKeysCalls++; return [...backing.keys()]; },
+    async remove(key) { backing.delete(key); }
+  };
+  const store = makeStore({ legacyStorageArea: storageArea });
+
+  assert.equal(await store.hasPreview("legacy-on-demand", { includeLegacy: false }), false);
+  assert.equal(getKeysCalls, 0, "startup-safe existence checks must not enumerate the legacy store");
+  assert.deepEqual(payloadReads, [], "startup-safe existence checks must not decode any legacy payload");
+
+  const migrated = await store.getPreview("legacy-on-demand");
+  assert.equal(migrated.metadata.originalUrl, "https://example.com/on-demand");
+  assert.deepEqual(payloadReads, [`${PREVIEW_KEY_PREFIX}legacy-on-demand`]);
+  assert.equal(backing.size, 0, "verified on-demand migration removes only its source record");
+  assert.equal(getKeysCalls, 0, "named on-demand migration never scans unrelated legacy keys");
+});
+
 test("migration converts legacy Base64 + DOM records, verifies counts, removes old keys, idempotent", async ({ }) => {
   const backing = new Map();
+  let readAllCalls = 0;
   const storageArea = {
     async get(keys) {
-      if (keys === null) return Object.fromEntries(backing);
+      if (keys === null) {
+        readAllCalls++;
+        throw new Error("migration must never materialize the complete storage area");
+      }
       if (typeof keys === "string") return backing.has(keys) ? { [keys]: structuredClone(backing.get(keys)) } : {};
       return Object.fromEntries([...backing].filter(([key]) => keys.includes(key)));
     },
+    async getKeys() { return [...backing.keys()]; },
     async set(values) { for (const [key, value] of Object.entries(values)) backing.set(key, structuredClone(value)); },
     async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) backing.delete(key); }
   };
@@ -109,6 +146,7 @@ test("migration converts legacy Base64 + DOM records, verifies counts, removes o
 
   const store = makeStore();
   const outcome = await store.migrateLegacyRecords(storageArea);
+  assert.equal(readAllCalls, 0, "migration must enumerate keys without reading the multi-gigabyte store into memory");
   assert.equal(outcome.migrated, 2);
   assert.deepEqual(outcome.failed, [`${PREVIEW_KEY_PREFIX}junk`], "unconvertible junk stays in storage.local");
   assert.equal(backing.size, 1, "successfully migrated keys are removed");

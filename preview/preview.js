@@ -1,5 +1,3 @@
-import { previewStorageKey } from "../lib/constants.js";
-
 const params = new URLSearchParams(location.search);
 const token = params.get("token");
 const preview = document.querySelector("#preview");
@@ -60,10 +58,6 @@ async function loadPreview() {
   const response = await chrome.runtime.sendMessage({ type: "PREVIEW_GET_RECORD", token });
   if (response?.__tabSleepError) throw new Error(response.__tabSleepError);
   record = response;
-  if (!record) {
-    const stored = await chrome.storage.local.get(previewStorageKey(token));
-    record = stored[previewStorageKey(token)] ?? null;
-  }
   if (!record) {
     throw new Error("Frozen record missing");
   }
@@ -161,7 +155,21 @@ preview.addEventListener("keydown", (event) => {
   }
 });
 
-void loadPreview().catch(async (error) => {
+async function loadWhenVisible() {
+  if (document.hidden) {
+    await new Promise((resolve) => {
+      const onVisibility = () => {
+        if (document.hidden) return;
+        document.removeEventListener("visibilitychange", onVisibility);
+        resolve();
+      };
+      document.addEventListener("visibilitychange", onVisibility);
+    });
+  }
+  return loadPreview();
+}
+
+void loadWhenVisible().catch(async (error) => {
   meta.textContent = error.message;
   try {
     await chrome.runtime.sendMessage({ type: "PREVIEW_FAILED", token, error: error.message });

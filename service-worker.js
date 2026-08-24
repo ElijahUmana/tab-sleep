@@ -6,7 +6,7 @@ import { domainOf } from "./lib/policy.js";
 
 // One shared IndexedDB store: the engine writes/deletes frozen records,
 // sessions only consult token existence for still-sleeping restores.
-const previewStore = new PreviewStore();
+const previewStore = new PreviewStore({ legacyStorageArea: chrome.storage.local });
 const engine = new TabSleepEngine(chrome, undefined, undefined, { previewStore });
 const sessions = new SessionsManager(chrome, undefined, undefined, { previewStore });
 

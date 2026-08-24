@@ -132,7 +132,7 @@ preview/
   └─ click-anywhere wake surface
 ```
 
-Runtime signals live in `chrome.storage.session`. Settings, metrics, preview records, and the preview index live in `chrome.storage.local`.
+Frozen preview image blobs live in IndexedDB with content-addressed deduplication and bounded per-tab/profile budgets. Runtime signals live in `chrome.storage.session`; settings, metrics, the preview index, session metadata, and durable wake transactions live in `chrome.storage.local`. Legacy Base64 previews migrate only when their exact token is opened or explicitly restored; extension startup never scans or decodes the old image store, regardless of profile size.
 
 ## Development
 
