@@ -22,7 +22,7 @@ export function createFakeChrome(initialTabs = [], options = {}) {
   const tabs = initialTabs.map(clone), local = area(options.local), session = area(options.session), alarms = new Map();
   const signals = new Map(Object.entries(options.signals ?? {}).map(([key, value]) => [Number(key), value]));
   const origin = "chrome-extension://tab-sleep-test/";
-  const calls = { captured: [], updated: [], discarded: [], executed: [], badges: [] };
+  const calls = { captured: [], updated: [], discarded: [], executed: [], badges: [], created: [], debuggerAttached: [], debuggerDetached: [], debuggerCommands: [] };
   const chromeApi = {
     calls, tabsData: tabs, signals, testOptions: options, storage: { local, session },
     tabs: {
@@ -33,7 +33,7 @@ export function createFakeChrome(initialTabs = [], options = {}) {
         Object.assign(tab, clone(changes));
         if (changes.url) {
           tab.url = changes.url;
-          tab.status = options.previewNeverCompletes && changes.url.startsWith(origin) ? "loading" : "complete";
+          tab.status = (options.previewNeverCompletes && changes.url.startsWith(origin)) || options.urlsThatNeverComplete?.includes(changes.url) ? "loading" : "complete";
           tab.discarded = false;
           if (changes.url.startsWith(`${origin}preview/preview.html`) && options.autoPreviewReady !== false) {
             const token = new URL(changes.url).searchParams.get("token");
@@ -72,10 +72,45 @@ export function createFakeChrome(initialTabs = [], options = {}) {
         return [{ result: { visible: Boolean(signal.visible), busy: Boolean(signal.localBusy), bridgeReady: signal.bridgeReady !== false } }];
       }
     },
-    windows: { WINDOW_ID_NONE: -1, async getLastFocused() { return { id: 1, focused: true }; }, async getAll() { return tabs.filter((tab, index, list) => list.findIndex((item) => item.windowId === tab.windowId) === index).map((tab) => ({ id: tab.windowId, state: options.windowStates?.[tab.windowId] ?? "normal" })); } },
+    windows: { WINDOW_ID_NONE: -1, async getLastFocused() { return { id: 1, focused: true }; }, async getAll() { return tabs.filter((tab, index, list) => list.findIndex((item) => item.windowId === tab.windowId) === index).map((tab) => ({ id: tab.windowId, focused: tab.windowId === 1, state: options.windowStates?.[tab.windowId] ?? "normal" })); } },
+    debugger: options.debugger === false ? undefined : {
+      async attach(target, protocolVersion) {
+        if (options.debuggerAttachFails) throw new Error(`Another debugger is already attached to tab ${target.tabId}`);
+        calls.debuggerAttached.push({ ...clone(target), protocolVersion });
+      },
+      async sendCommand(target, method, params) {
+        calls.debuggerCommands.push({ ...clone(target), method, params: clone(params) });
+        if (method === "Page.getLayoutMetrics") {
+          return clone(options.pageLayout ?? {
+            cssContentSize: { width: 1280, height: 800 },
+            cssVisualViewport: { clientWidth: 1280, clientHeight: 800 }
+          });
+        }
+        if (method === "Page.captureScreenshot") return { data: "QUJD" };
+        throw new Error(`Unhandled debugger command in fake: ${method}`);
+      },
+      async detach(target) {
+        if (options.debuggerDetachFails) throw new Error("detach refused");
+        calls.debuggerDetached.push(clone(target));
+      }
+    },
     alarms: { async get(name) { return clone(alarms.get(name)); }, async create(name, info) { alarms.set(name, { name, ...clone(info), scheduledTime: 30000 }); }, async clear(name) { return alarms.delete(name); } },
     action: { async setBadgeText(details) { calls.badges.push(details); }, async setBadgeBackgroundColor() {} },
     runtime: { getURL(path) { return `${origin}${path}`; }, async openOptionsPage() {} }
+  };
+  chromeApi.tabs.create = async (createProperties) => {
+    const maxId = tabs.reduce((max, tab) => Math.max(max, tab.id), 0);
+    const tab = { id: maxId + 1, windowId: 1, active: false, discarded: false, pinned: createProperties.pinned === true, audible: false, autoDiscardable: true, status: "complete", url: createProperties.url ?? "about:blank", title: createProperties.url ?? "New tab", index: tabs.length };
+    if (createProperties.url?.startsWith(origin)) {
+      tab.status = options.previewNeverCompletes ? "loading" : "complete";
+      if (createProperties.url.startsWith(`${origin}preview/preview.html`) && options.autoPreviewReady !== false && options.onCreatedPreviewReady !== false) {
+        const token = new URL(createProperties.url).searchParams.get("token");
+        queueMicrotask(() => options.onPreviewReady?.({ tabId: tab.id, token, url: createProperties.url }));
+      }
+    }
+    tabs.push(tab);
+    calls.created.push(clone(createProperties));
+    return clone(tab);
   };
   options.onPreviewReady = async ({ tabId, token }) => {
     const engine = options.engineRef?.current;

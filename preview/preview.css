@@ -66,27 +66,23 @@ html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background:
   #badge span { max-width: 62vw; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  #waking span { animation: none; }
-}
-
+/* Tiny unobtrusive status pill. The frozen visual itself is the experience
+   while waking — this never covers, dims, or intercepts input. */
 #waking {
+  pointer-events: none;
   position: fixed;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: #15131ddd;
-  color: #fff;
-  font-weight: 650;
+  left: 50%;
+  bottom: 72px;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border: 1px solid #ffffff24;
+  border-radius: 999px;
+  background: var(--surface);
+  color: #f8f7fb;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 8px 30px #0006;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 #waking[hidden] { display: none; }
-#waking span {
-  width: 20px;
-  height: 20px;
-  margin-right: 10px;
-  border: 2px solid #ffffff55;
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin .7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }

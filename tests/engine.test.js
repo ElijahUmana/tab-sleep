@@ -2,9 +2,32 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { RUNTIME_STATE_KEY, SETTINGS_KEY, previewStorageKey } from "../lib/constants.js";
 import { TabSleepEngine } from "../lib/engine.js";
+import { PreviewStore } from "../lib/preview-store.js";
 import { createFakeChrome, makeTab } from "./fake-chrome.js";
+import { FakeIndexedDbFactory } from "./fake-idb.js";
 function clock(start = 1_000_000) { let now = start; return { now: () => now, advance: (ms) => { now += ms; } }; }
-function engine(chrome, c) { let i = 0; const e = new TabSleepEngine(chrome, c.now, () => `token-${++i}`); if (chrome.testOptions) chrome.testOptions.engineRef = { current: e }; return e; }
+function engine(chrome, c) {
+  let i = 0;
+  const indexedDb = new FakeIndexedDbFactory();
+  const previewStore = new PreviewStore({ indexedDb });
+  const e = new TabSleepEngine(chrome, c.now, () => `token-${++i}`, {
+    previewStore,
+    failedWakeGraceMs: chrome.testOptions?.failedWakeGraceMs
+  });
+  if (chrome.testOptions) chrome.testOptions.engineRef = { current: e };
+  e.previewStore = previewStore;
+  return e;
+}
+// Seed a frozen record through the store the way the engine writes them.
+// A bitmap seed uses the fake capture's exact bytes so dedup checks hold.
+async function seedPreview(store, token, { html = null, capturedAt = 1_000_000 } = {}) {
+  await store.savePreview(html === null
+    ? { token, originalUrl: "https://example.com/tab-1", title: "Tab 1", capturedAt, frozenAt: capturedAt, images: [{ bytes: new Uint8Array([65, 66, 67, 68]), mime: "image/png", kind: "viewport" }] }
+    : { token, originalUrl: "https://example.com/tab-1", title: "Tab 1", html, capturedAt, frozenAt: capturedAt });
+}
+function storeDb(e) {
+  return e.previewStore.indexedDb.databases.get("tab-sleep-previews");
+}
 async function makeReady(e, chrome, c, id, { busy = false } = {}) {
   chrome.signals.set(id, { visible: true, localBusy: false, remoteBusy: false, bridgeReady: true });
   await e.handleSignal({ visible: true, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(id));
@@ -77,11 +100,13 @@ test("hidden quiet tab without bitmap screenshot freezes via exact DOM snapshot"
       1: { visible: false, localBusy: false, remoteBusy: false, bridgeReady: true, domSnapshot: true },
       2: { visible: true, localBusy: false, remoteBusy: false, bridgeReady: true }
     },
-    local: { [SETTINGS_KEY]: { enabled: true, idleMinutes: 0.5, skipPinned: true, skipAudible: true, respectAutoDiscardable: true, skipLoading: true } }
+    local: { [SETTINGS_KEY]: { enabled: true, idleMinutes: 0.5, skipPinned: true, skipAudible: true, respectAutoDiscardable: true, skipLoading: true } },
+    debuggerAttachFails: true
   });
   const e = engine(chrome, c);
   await e.start();
-  // Tab 1 becomes hidden+quiet with NO bitmap capture ever taken.
+  // Tab 1 becomes hidden+quiet with NO bitmap capture ever taken and the
+  // debugger unavailable, so the fallback chain lands on the DOM snapshot.
   await e.handleSignal({ visible: false, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(1));
   c.advance(120_000);
   await e.handleSignal({ visible: false, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(1));
@@ -90,7 +115,7 @@ test("hidden quiet tab without bitmap screenshot freezes via exact DOM snapshot"
   assert.match(chrome.tabsData[0].url, /preview\/preview\.html/);
   const state = chrome.storage.session.data[RUNTIME_STATE_KEY];
   const token = state.frozenTabs["1"].token;
-  const record = chrome.storage.local.data[previewStorageKey(token)];
+  const record = await e.previewStore.getMetadata(token);
   assert.ok(record.html.includes("Tab 1"));
   assert.equal(record.originalUrl, "https://example.com/tab-1");
   const woken = await e.wake(token, await chrome.tabs.get(1));
@@ -137,13 +162,13 @@ test("visible activity invalidates old snapshot", async () => {
 test("intermediate old-URL update cannot delete a freezing preview record", async () => {
   const c=clock(), chrome=createFakeChrome([makeTab(1)]); const e=engine(chrome,c); await e.start();
   const token="freezing-race-token";
-  await chrome.storage.local.set({[previewStorageKey(token)]:{token,originalUrl:"https://example.com/tab-1",title:"Tab 1",imageDataUrl:"data:image/png;base64,AAAA",capturedAt:c.now(),frozenAt:c.now()}});
+  await seedPreview(e.previewStore, token, { html: "<html><body>freezing race</body></html>", capturedAt: c.now() });
   const state=chrome.storage.session.data[RUNTIME_STATE_KEY];
   state.frozenTabs["1"]={token,originalUrl:"https://example.com/tab-1",status:"freezing"};
   state.captures["1"]={token,url:"https://example.com/tab-1",capturedAt:c.now(),hasImage:true};
   await chrome.storage.session.set({[RUNTIME_STATE_KEY]:state});
   await e.handleUpdated(1,{url:"https://example.com/tab-1"},await chrome.tabs.get(1));
-  assert.ok(chrome.storage.local.data[previewStorageKey(token)]);
+  assert.ok(await e.previewStore.hasPreview(token));
   assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"].status,"freezing");
 });
 
@@ -151,14 +176,14 @@ test("delayed old-URL update cannot delete a sleeping preview record", async () 
   const c=clock(), chrome=createFakeChrome([makeTab(1)]); const e=engine(chrome,c); await e.start();
   const token="sleeping-race-token";
   const previewUrl=`chrome-extension://tab-sleep-test/preview/preview.html?token=${token}`;
-  await chrome.storage.local.set({[previewStorageKey(token)]:{token,originalUrl:"https://example.com/tab-1",title:"Tab 1",imageDataUrl:"data:image/png;base64,AAAA",capturedAt:c.now(),frozenAt:c.now()}});
+  await seedPreview(e.previewStore, token, { html: "<html><body>sleeping race</body></html>", capturedAt: c.now() });
   const state=chrome.storage.session.data[RUNTIME_STATE_KEY];
   state.frozenTabs["1"]={token,originalUrl:"https://example.com/tab-1",status:"sleeping",verifiedSleeping:true};
   state.captures["1"]={token,url:"https://example.com/tab-1",capturedAt:c.now(),hasImage:true};
   await chrome.storage.session.set({[RUNTIME_STATE_KEY]:state});
   await chrome.tabs.update(1,{url:previewUrl});
   await e.handleUpdated(1,{url:"https://example.com/tab-1"},{...(await chrome.tabs.get(1)),url:"https://example.com/tab-1",pendingUrl:previewUrl});
-  assert.ok(chrome.storage.local.data[previewStorageKey(token)]);
+  assert.ok(await e.previewStore.hasPreview(token));
   assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"].status,"sleeping");
 });
 
@@ -174,10 +199,10 @@ test("pending preview URL resolves token before stale committed URL", async () =
 test("preview navigation transition preserves its snapshot record", async () => {
   const c=clock(), chrome=createFakeChrome([makeTab(1)]); const e=engine(chrome,c); await e.start();
   const token="transition-token";
-  await chrome.storage.local.set({[previewStorageKey(token)]:{token,originalUrl:"https://example.com/tab-1",title:"Tab 1",html:"<html><body>frozen</body></html>",capturedAt:c.now(),frozenAt:c.now()}});
+  await seedPreview(e.previewStore, token, { html: "<html><body>frozen</body></html>", capturedAt: c.now() });
   const tab=await chrome.tabs.get(1);
   await e.handleUpdated(1,{url:`chrome-extension://tab-sleep-test/preview/preview.html?token=${token}`},{...tab,pendingUrl:`chrome-extension://tab-sleep-test/preview/preview.html?token=${token}`});
-  assert.ok(chrome.storage.local.data[previewStorageKey(token)]);
+  assert.ok(await e.previewStore.hasPreview(token));
   assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"].token,token);
   assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"].status,"freezing");
   await chrome.tabs.update(1,{url:`chrome-extension://tab-sleep-test/preview/preview.html?token=${token}`});
@@ -188,14 +213,14 @@ test("preview navigation transition preserves its snapshot record", async () => 
 test("preview render failure restores the original page", async () => {
   const c=clock(), chrome=createFakeChrome([makeTab(1)]); const e=engine(chrome,c); await e.start();
   const token="failed-render-token";
-  await chrome.storage.local.set({[previewStorageKey(token)]:{token,originalUrl:"https://example.com/tab-1",title:"Tab 1",html:"<html><body>broken render</body></html>",capturedAt:c.now(),frozenAt:c.now()}});
+  await seedPreview(e.previewStore, token, { html: "<html><body>broken render</body></html>", capturedAt: c.now() });
   const previewUrl=`chrome-extension://tab-sleep-test/preview/preview.html?token=${token}`;
   await chrome.tabs.update(1,{url:previewUrl});
   await e.restorePreview(await chrome.tabs.get(1),token);
   const result=await e.handlePreviewFailed({token,error:"missing visual"},await chrome.tabs.get(1));
   assert.equal(result.recovered,true);
   assert.equal(chrome.tabsData[0].url,"https://example.com/tab-1");
-  assert.equal(chrome.storage.local.data[previewStorageKey(token)],undefined);
+  assert.equal(await e.previewStore.hasPreview(token),false);
   assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"],undefined);
 });
 
@@ -248,4 +273,191 @@ test("quick finished polls do not keep recently-worked guard alive", async () =>
   await new Promise((r)=>setTimeout(r,0));
   const result = await e.scan();
   assert.deepEqual(result.frozen, [2]);
+});
+
+test("full-page debugger capture freezes a background tab with a whole-scrollable-page record", async () => {
+  const c = clock(), chrome = createFakeChrome([makeTab(1, { active: true }), makeTab(2)], {
+    signals: {
+      1: { visible: true },
+      2: { visible: false, localBusy: false, remoteBusy: false, bridgeReady: true }
+    },
+    pageLayout: { cssContentSize: { width: 1280, height: 800 }, cssVisualViewport: { clientWidth: 1280, clientHeight: 800 } }
+  });
+  const e = engine(chrome, c);
+  await e.start();
+  // Tab 2 is hidden and quiet; its only visual can come from the debugger.
+  await e.handleSignal({ visible: false, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(2));
+  c.advance(120_000);
+  await e.handleSignal({ visible: false, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(2));
+  const result = await e.scan();
+  assert.deepEqual(result.frozen, [2]);
+  assert.equal(chrome.tabsData[1].discarded, false);
+  const token = chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["2"].token;
+  const storedRecord = await e.previewStore.getPreview(token);
+  assert.ok(storedRecord.images.length > 0);
+  assert.equal(storedRecord.images[0].mime, "image/png");
+  const metadata = storedRecord.metadata;
+  assert.equal(metadata.originalUrl, "https://example.com/tab-2");
+  // The debugger attached to the sleeping tab and detached immediately.
+  assert.deepEqual(chrome.calls.debuggerAttached.map((entry) => entry.tabId), [2]);
+  assert.deepEqual(chrome.calls.debuggerDetached.map((entry) => entry.tabId), [2]);
+});
+
+test("very tall page is captured as vertical WebP tiles with offsets", async () => {
+  const c = clock(), tileHeight = 4096;
+  const chrome = createFakeChrome([makeTab(1, { active: true }), makeTab(2)], {
+    signals: {
+      1: { visible: true },
+      2: { visible: false, localBusy: false, remoteBusy: false, bridgeReady: true }
+    },
+    pageLayout: { cssContentSize: { width: 1000, height: 3 * tileHeight + 512 }, cssVisualViewport: { clientWidth: 1000, clientHeight: 800 } }
+  });
+  const e = engine(chrome, c);
+  await e.start();
+  await e.handleSignal({ visible: false, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(2));
+  c.advance(120_000);
+  await e.handleSignal({ visible: false, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(2));
+  assert.deepEqual((await e.scan()).frozen, [2]);
+  const token = chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["2"].token;
+  const storedRecord = await e.previewStore.getPreview(token);
+  const tiles = storedRecord.images.filter((image) => image.kind === "tile");
+  assert.equal(tiles.length, 4);
+  assert.deepEqual(tiles.map((tile) => tile.tileIndex), [0, 1, 2, 3]);
+  assert.deepEqual(tiles.map((tile) => tile.yOffset), [0, tileHeight, 2 * tileHeight, 3 * tileHeight]);
+  assert.equal(tiles[3].height, 512);
+  for (const tile of tiles) assert.equal(tile.mime, "image/webp");
+  // Every screenshot used the clip param; no single giant bitmap was requested.
+  const shots = chrome.calls.debuggerCommands.filter((command) => command.method === "Page.captureScreenshot");
+  assert.equal(shots.length, 4);
+  for (const shot of shots) {
+    assert.equal(shot.params.format, "webp");
+    assert.equal(shot.params.clip.scale, 1);
+  }
+});
+
+test("debugger-blocked page falls back and still freezes without scrolling or focusing", async () => {
+  const c = clock(), chrome = createFakeChrome([makeTab(1, { active: true }), makeTab(2)], {
+    signals: {
+      1: { visible: true },
+      2: { visible: false, localBusy: false, remoteBusy: false, bridgeReady: true, domSnapshot: true }
+    },
+    debuggerAttachFails: true
+  });
+  const e = engine(chrome, c);
+  await e.start();
+  await e.handleSignal({ visible: false, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(2));
+  c.advance(120_000);
+  await e.handleSignal({ visible: false, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(2));
+  const result = await e.scan();
+  assert.deepEqual(result.frozen, [2]);
+  assert.equal(chrome.calls.debuggerDetached.length, 0);
+  const token = chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["2"].token;
+  const record = await e.previewStore.getMetadata(token);
+  assert.ok(typeof record.html === "string" && record.html.includes("Tab 2"));
+  const woken = await e.wake(token, await chrome.tabs.get(2));
+  assert.equal(woken.url, "https://example.com/tab-2");
+});
+
+test("huge page refuses tiled capture cleanly and still freezes via DOM fallback", async () => {
+  const c = clock(), chrome = createFakeChrome([makeTab(1, { active: true }), makeTab(2)], {
+    signals: {
+      1: { visible: true },
+      2: { visible: false, localBusy: false, remoteBusy: false, bridgeReady: true, domSnapshot: true }
+    },
+    pageLayout: { cssContentSize: { width: 1280, height: 265 * 4096 + 1 }, cssVisualViewport: { clientWidth: 1280, clientHeight: 800 } }
+  });
+  const e = engine(chrome, c);
+  await e.start();
+  await e.handleSignal({ visible: false, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(2));
+  c.advance(120_000);
+  await e.handleSignal({ visible: false, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(2));
+  // 265+ tiles exceeds FULL_PAGE_MAX_TILES=64: capture refuses without taking
+  // screenshots, and the DOM fallback still produces a valid freeze.
+  const result = await e.scan();
+  assert.deepEqual(result.frozen, [2]);
+  const commands = chrome.calls.debuggerCommands.filter((command) => command.method === "Page.captureScreenshot");
+  assert.equal(commands.length, 0);
+  assert.deepEqual(chrome.calls.debuggerDetached.map((entry) => entry.tabId), [2]);
+  const token = chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["2"].token;
+  const record = await e.previewStore.getMetadata(token);
+  assert.ok(typeof record.html === "string" && record.html.includes("Tab 2"));
+});
+
+test("wake records durable intent first and deletes the record only after commit", async () => {
+  const c = clock(), chrome = createFakeChrome([makeTab(1)]);
+  const e = engine(chrome, c);
+  await e.start();
+  const token = "wake-commit-token", previewUrl = `chrome-extension://tab-sleep-test/preview/preview.html?token=${token}`;
+  await seedPreview(e.previewStore, token, { capturedAt: c.now() });
+  const state = chrome.storage.session.data[RUNTIME_STATE_KEY];
+  state.frozenTabs["1"] = { token, originalUrl: "https://example.com/tab-1", status: "sleeping", verifiedSleeping: true };
+  await chrome.storage.session.set({ [RUNTIME_STATE_KEY]: state });
+  await chrome.tabs.update(1, { url: previewUrl });
+  const response = await e.beginWake(token, await chrome.tabs.get(1));
+  assert.equal(response.url, "https://example.com/tab-1");
+  assert.equal(response.tabId, 1);
+  assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"].status, "waking");
+  assert.equal(chrome.storage.local.data.wakeTransactions["1"].token, token);
+  assert.ok(await e.previewStore.hasPreview(token), "record must survive until the live page commits");
+  // The preview navigates itself (location.replace); Chrome commits the URL.
+  await chrome.tabs.update(1, { url: "https://example.com/tab-1" });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(await e.previewStore.hasPreview(token), false);
+  assert.equal(chrome.storage.local.data.wakeTransactions["1"], undefined);
+  assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"], undefined);
+  assert.equal(chrome.storage.local.data.metrics.totalWoken, 1);
+});
+
+test("failed wake restores the frozen preview with retry and keeps the record", async () => {
+  const c = clock(), chrome = createFakeChrome([makeTab(1)], { urlsThatNeverComplete: ["https://example.com/tab-1"], failedWakeGraceMs: 100 });
+  const e = engine(chrome, c);
+  await e.start();
+  const token = "wake-fail-token", previewUrl = `chrome-extension://tab-sleep-test/preview/preview.html?token=${token}`;
+  await seedPreview(e.previewStore, token, { capturedAt: c.now() });
+  const state = chrome.storage.session.data[RUNTIME_STATE_KEY];
+  state.frozenTabs["1"] = { token, originalUrl: "https://example.com/tab-1", status: "sleeping", verifiedSleeping: true };
+  await chrome.storage.session.set({ [RUNTIME_STATE_KEY]: state });
+  await chrome.tabs.update(1, { url: previewUrl });
+  await e.beginWake(token, await chrome.tabs.get(1));
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.ok(await e.previewStore.hasPreview(token), "a failed wake must keep the recoverable record");
+  assert.match(chrome.tabsData[0].url, /retry=1/);
+  assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"].status, "sleeping");
+  assert.equal(chrome.storage.local.data.wakeTransactions["1"], undefined);
+});
+
+test("interrupted wake reconciles from the durable transaction after restart", async () => {
+  const c = clock(), chrome = createFakeChrome([makeTab(1)]);
+  const e = engine(chrome, c);
+  await e.start();
+  const token = "wake-restart-token";
+  await seedPreview(e.previewStore, token, { capturedAt: c.now() });
+  await chrome.storage.local.set({
+    wakeTransactions: { "1": { token, tabId: 1, originalUrl: "https://example.com/tab-1", startedAt: c.now() } }
+  });
+  // The worker died after Chrome committed the live document.
+  await chrome.tabs.update(1, { url: "https://example.com/tab-1" });
+  await e.reconcileWakeTransactions();
+  assert.equal(await e.previewStore.hasPreview(token), false);
+  assert.equal(chrome.storage.local.data.wakeTransactions["1"], undefined);
+  assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"], undefined);
+  assert.equal(chrome.storage.local.data.metrics.totalWoken, 1);
+});
+
+test("reconcile keeps an intact frozen record when the live page never committed", async () => {
+  const c = clock(), chrome = createFakeChrome([makeTab(1)]);
+  const e = engine(chrome, c);
+  await e.start();
+  const token = "wake-orphan-token";
+  await seedPreview(e.previewStore, token, { capturedAt: c.now() });
+  await chrome.storage.local.set({
+    wakeTransactions: { "1": { token, tabId: 1, originalUrl: "https://example.com/tab-1", startedAt: c.now() } }
+  });
+  // The worker died mid-restore; the tab is back on the frozen visual.
+  await chrome.tabs.update(1, { url: `${e.previewUrlPrefix}?token=${token}&retry=1` });
+  await e.reconcileWakeTransactions();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok(await e.previewStore.hasPreview(token), "record must survive when the site never loaded");
+  assert.equal(chrome.storage.local.data.wakeTransactions["1"], undefined);
+  assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"].status, "sleeping");
 });

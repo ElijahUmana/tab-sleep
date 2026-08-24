@@ -22,7 +22,8 @@ Tab Sleep is a private Chrome Manifest V3 extension that replaces quiet backgrou
 4. A local visual record is prepared.
 5. The live site is replaced by `preview/preview.html`.
 6. Selecting the tab displays the frozen visual without loading the original website.
-7. Clicking anywhere on the frozen visual restores the original URL.
+7. A trusted click anywhere on the frozen visual (or Enter/Space) wakes the page: a durable wake transaction is recorded first, then the preview tab navigates itself to the original URL. The frozen visual stays fully on screen until the live page commits — no overlay, spinner, or blank flash beyond Chrome's own progress.
+8. The frozen record is deleted only after the live page confirms it loaded. If the site fails (DNS/network error or commit timeout), the frozen visual is restored automatically with a retry affordance, preserving the original URL and screenshot.
 
 ## Safety invariants
 
@@ -91,6 +92,17 @@ Open **Tab Sleep → Settings** to configure:
 - Wait for navigation to finish
 
 The popup also lets you protect the current page and manually freeze eligible inactive tabs. Manual freeze bypasses idle age only; it never bypasses visibility, work, media, loading, or visual-validity gates.
+
+## Sessions, history, and recovery
+
+The Settings page has a **Sessions** section (also reachable from the popup):
+
+- **Automatic snapshots** of every window and tab group are taken roughly every 10 minutes after tab changes. The last 20 are kept.
+- **Named sessions** capture the same snapshot under a name you choose; saving again with the same name updates it in place.
+- **Restore** a whole session, one window, one tab group, or a single tab. Entries whose frozen preview still exists reopen as sleeping preview pages instead of live websites; everything else reopens as a normal URL.
+- **Searchable history** records saves, snapshots, and restores (capped at 500 entries).
+- **Import/export** moves sessions plus settings as one JSON file. Settings sync through Chrome Sync when enabled; frozen previews never leave this machine.
+- A **recovery manifest** maps every parked tab to its original URL so tabs can be recovered after an update or restart even when runtime state was lost.
 
 ## Architecture
 
@@ -179,6 +191,7 @@ The fallback is script-free and cannot exactly preserve every browser rendering 
 - `tabs`: tab metadata, navigation, and visible-tab capture
 - `scripting`: tracker injection, signal probes, and detached DOM fallback capture
 - `storage`: settings, runtime state, metrics, and local frozen visuals
+- `sessions`: session snapshots and sleep history records
 - `alarms`: periodic eligibility scans
 - `webRequest`: request lifecycle fences
 - `unlimitedStorage`: local preview records without the standard extension storage quota

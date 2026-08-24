@@ -16,5 +16,23 @@ test("normalizeSettings clamps and rounds to half-minute increments", () => {
 
 test("normalizeSettings preserves explicit boolean choices", () => {
   const settings = normalizeSettings({ enabled: false, idleMinutes: 10, skipPinned: false, skipAudible: false, respectAutoDiscardable: false, skipLoading: false });
-  assert.deepEqual(settings, { enabled: false, idleMinutes: 10, skipPinned: false, skipAudible: false, respectAutoDiscardable: false, skipLoading: false });
+  assert.deepEqual(settings, {
+    enabled: false,
+    idleMinutes: 10,
+    skipPinned: false,
+    skipAudible: false,
+    respectAutoDiscardable: false,
+    skipLoading: false,
+    ...Object.fromEntries(Object.entries(DEFAULT_SETTINGS).filter(([key]) => !["enabled", "idleMinutes", "skipPinned", "skipAudible", "respectAutoDiscardable", "skipLoading"].includes(key)))
+  });
+});
+
+test("normalizeSettings clamps battery threshold and preserves power toggles", () => {
+  assert.equal(normalizeSettings({ minBatteryPercent: -5 }).minBatteryPercent, 0);
+  assert.equal(normalizeSettings({ minBatteryPercent: "80" }).minBatteryPercent, 80);
+  assert.equal(normalizeSettings({ minBatteryPercent: 150 }).minBatteryPercent, 100);
+  const settings = normalizeSettings({ keepMutedPlayingAwake: true, pauseWhileCharging: true, minBatteryPercent: 20 });
+  assert.equal(settings.keepMutedPlayingAwake, true);
+  assert.equal(settings.pauseWhileCharging, true);
+  assert.equal(settings.minBatteryPercent, 20);
 });

@@ -29,6 +29,10 @@
         <strong id="idleTime">2 min</strong>
         <span>idle threshold</span>
       </div>
+      <div>
+        <strong id="reclaimedMemory">—</strong>
+        <span>memory reclaimed</span>
+      </div>
     </section>
 
     <section class="current-tab">
@@ -42,9 +46,29 @@
       </label>
     </section>
 
+    <button id="whyAwakeToggle" class="link-toggle" type="button" aria-expanded="false" aria-controls="whyAwakePanel" hidden>Why is this tab awake?</button>
+    <ul id="whyAwakePanel" class="reason-trace" hidden></ul>
+
     <button id="sleepNow" class="primary" type="button">
       <span aria-hidden="true">☾</span>
       Freeze inactive tabs now
+    </button>
+
+    <details class="power-menu">
+      <summary>Bulk actions</summary>
+      <div class="bulk-grid">
+        <button id="freezeWindow" class="bulk-button" type="button">Freeze window</button>
+        <button id="freezeOthers" class="bulk-button" type="button">Freeze others</button>
+        <button id="freezeAll" class="bulk-button" type="button">Freeze all</button>
+        <button id="wakeAll" class="bulk-button" type="button">Wake all</button>
+        <button id="keepDomain" class="bulk-button" type="button">Keep site awake 1 h</button>
+      </div>
+      <p id="nextScanLine" class="hint-line"></p>
+    </details>
+
+    <button id="openSessions" class="secondary" type="button">
+      <span aria-hidden="true">⧉</span>
+      Sessions &amp; history
     </button>
 
     <div id="message" role="status" aria-live="polite"></div>

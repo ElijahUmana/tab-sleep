@@ -60,9 +60,111 @@
       </label>
     </section>
 
+    <details class="power-section" id="rulesSection">
+      <summary>Site rules</summary>
+      <p class="section-copy">Always keep matching sites awake, or never sleep them. Denylist wins over allowlist.</p>
+
+      <label class="check-row">
+        <div><strong>Never sleep listed sites</strong><span>Allowlist keeps matching tabs awake</span></div>
+        <input id="allowlistEnabled" type="checkbox">
+      </label>
+      <label class="check-row">
+        <div><strong>Never keep listed sites awake</strong><span>Denylist makes matching tabs always eligible</span></div>
+        <input id="denylistEnabled" type="checkbox">
+      </label>
+
+      <div class="rules-toolbar">
+        <select id="ruleType" aria-label="Rule type">
+          <option value="domain">Domain</option>
+          <option value="url-prefix">URL prefix</option>
+          <option value="regex">Regular expression</option>
+        </select>
+        <input id="rulePattern" type="text" placeholder="example.com" aria-label="Rule pattern">
+      </div>
+      <div class="rules-toolbar">
+        <button id="addAllowRule" type="button" class="text-button">Add to allowlist</button>
+        <button id="addDenyRule" type="button" class="text-button danger-text-button">Add to denylist</button>
+      </div>
+
+      <h3 class="sub-heading">Allowlist</h3>
+      <ul id="allowList" class="rule-list"></ul>
+      <p id="allowEmpty" class="hint">No allowlist rules.</p>
+
+      <h3 class="sub-heading">Denylist</h3>
+      <ul id="denyList" class="rule-list"></ul>
+      <p id="denyEmpty" class="hint">No denylist rules.</p>
+
+      <h3 class="sub-heading">Test a URL</h3>
+      <div class="rules-toolbar">
+        <input id="ruleTestUrl" type="url" placeholder="https://example.com/page" aria-label="URL to test">
+        <button id="ruleTestButton" type="button" class="text-button">Test</button>
+      </div>
+      <p id="ruleTestResult" class="hint"></p>
+    </details>
+
+    <details class="power-section">
+      <summary>Battery &amp; power</summary>
+      <label class="check-row">
+        <div><strong>Muted media playing</strong><span>Keep tabs playing muted audio/video awake</span></div>
+        <input id="keepMutedPlayingAwake" type="checkbox">
+      </label>
+      <label class="check-row">
+        <div><strong>Pause while charging</strong><span>Stop automatic sleeping while the device charges</span></div>
+        <input id="pauseWhileCharging" type="checkbox">
+      </label>
+      <label class="check-row">
+        <div><strong>Pause when offline</strong><span>Stop automatic sleeping when there is no network</span></div>
+        <input id="pauseWhenOffline" type="checkbox">
+      </label>
+      <label class="field" for="minBatteryPercent">
+        <span>Sleep anyway below battery level</span>
+        <div class="number-control">
+          <input id="minBatteryPercent" type="number" min="0" max="100" step="1" placeholder="off">
+          <span>% (empty = off)</span>
+        </div>
+      </label>
+    </details>
+
     <section class="privacy">
       <h2>How previews work</h2>
       <p>When possible, Tab Sleep stores a full-resolution PNG of the last visible page. For never-visible background tabs, it creates a script-free best-effort DOM preview from a detached clone. Both stay local in this Chrome profile. Sleeping replaces the live website with a lightweight extension page; it does not discard that preview, so selecting the tab never reloads the original site.</p>
+    </section>
+
+    <section id="sessionsSection">
+      <div class="section-heading">
+        <div>
+          <h2>Sessions</h2>
+          <p>Named snapshots of your windows, groups, and tabs. Automatic snapshots are taken roughly every 10 minutes after tab changes.</p>
+        </div>
+        <button id="saveSession" type="button" class="text-button">Save current session</button>
+      </div>
+
+      <label class="field" for="sessionName">
+        <span>Session name</span>
+        <input id="sessionName" type="text" maxlength="80" placeholder="e.g. Weekly research">
+      </label>
+
+      <div class="sessions-toolbar">
+        <input id="historySearch" type="search" placeholder="Search sleep history…" aria-label="Search sleep history">
+      </div>
+
+      <ul id="sessionList" class="session-list"></ul>
+      <p id="sessionsEmpty" class="hint">No sessions yet. Save one above or wait for an automatic snapshot.</p>
+
+      <h3 class="sub-heading">Sleep history</h3>
+      <ul id="historyList" class="history-list" aria-live="polite"></ul>
+      <p id="historyEmpty" class="hint">Nothing in the history yet.</p>
+    </section>
+
+    <section id="transferSection">
+      <h2>Import &amp; export</h2>
+      <p class="section-copy">Sessions and settings as a JSON file. Settings also sync through Chrome when Chrome Sync is enabled; frozen previews always stay on this machine.</p>
+      <div class="transfer-row">
+        <button id="exportData" type="button" class="text-button">Export JSON</button>
+        <button id="importData" type="button" class="text-button">Import JSON…</button>
+        <input id="importFile" type="file" accept="application/json,.json" hidden>
+      </div>
+      <p id="recoveryNote" class="hint" hidden></p>
     </section>
 
     <footer>

@@ -41,3 +41,28 @@ test("hidden quiet tab with current snapshot sleeps only after full threshold", 
   assert.equal(getAwakeTabBlockReason(tab(), DEFAULT_SETTINGS, ready({ inactiveSince: { "1": now - 119_999 } }), now), "not-due");
   assert.equal(getAwakeTabBlockReason(tab(), DEFAULT_SETTINGS, ready(), now), null);
 });
+test("allow and deny rules gate freezing before idle evaluation", () => {
+  const state = ready({ rules: { allowlistEnabled: true, denylistEnabled: true, allow: [{ type: "domain", pattern: "example.com" }], deny: [] } });
+  assert.equal(getAwakeTabBlockReason(tab(), DEFAULT_SETTINGS, state, now), "allow-rule");
+  const denyState = ready({ rules: { allowlistEnabled: false, denylistEnabled: true, allow: [], deny: [{ type: "url-prefix", pattern: "https://example.com" }] } });
+  // A denied tab is never blocked by its rule — it becomes eligible normally.
+  assert.equal(getAwakeTabBlockReason(tab(), DEFAULT_SETTINGS, denyState, now), null);
+});
+test("temporary keep-awake grants block by scope", () => {
+  const grants = { "tab:1": { scope: "tab", expiresAt: Infinity }, "window:2": { scope: "window", expiresAt: now + 1000 } };
+  assert.equal(getAwakeTabBlockReason(tab(), DEFAULT_SETTINGS, ready({ temporaryGrants: grants }), now), "temp-keep-awake");
+  assert.equal(getAwakeTabBlockReason(tab(), DEFAULT_SETTINGS, ready({ temporaryGrants: {} }), now), null);
+  // An expired grant no longer protects.
+  const expired = { "tab:1": { scope: "tab", expiresAt: now - 1 } };
+  assert.equal(getAwakeTabBlockReason(tab(), DEFAULT_SETTINGS, ready({ temporaryGrants: expired }), now), null);
+});
+test("battery and network gates pause sleeping from the power snapshot", () => {
+  const charging = { ...DEFAULT_SETTINGS, pauseWhileCharging: true, enabled: true, idleMinutes: 2 };
+  assert.equal(getAwakeTabBlockReason(tab(), charging, ready(), now, { power: { charging: true, level: 0.5, offline: false } }), "charging");
+  const offlineSettings = { ...DEFAULT_SETTINGS, pauseWhenOffline: true, enabled: true, idleMinutes: 2 };
+  assert.equal(getAwakeTabBlockReason(tab(), offlineSettings, ready(), now, { power: { charging: false, level: 0.5, offline: true } }), "offline");
+  const lowBattery = { ...DEFAULT_SETTINGS, minBatteryPercent: 20, enabled: true, idleMinutes: 2 };
+  assert.equal(getAwakeTabBlockReason(tab(), lowBattery, ready(), now, { power: { charging: false, level: 0.15, offline: false } }), "battery-low");
+  // Above threshold: no battery block.
+  assert.equal(getAwakeTabBlockReason(tab(), lowBattery, ready(), now, { power: { charging: false, level: 0.8, offline: false } }), null);
+});
