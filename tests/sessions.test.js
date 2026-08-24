@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { RUNTIME_STATE_KEY, SESSION_HISTORY_KEY, SESSION_HISTORY_LIMIT, SESSIONS_KEY, SESSIONS_SCHEMA_VERSION } from "../lib/constants.js";
+import { RECOVERY_MANIFEST_KEY, RUNTIME_STATE_KEY, SESSION_HISTORY_KEY, SESSION_HISTORY_LIMIT, SESSIONS_KEY, SESSIONS_SCHEMA_VERSION } from "../lib/constants.js";
 import {
   SessionsManager,
   buildExportPayload,
@@ -273,16 +273,20 @@ test("recovery manifest rebuild tracks frozen tokens and survives restart reconc
   assert.equal(manifest.entries["live-token"].originalUrl, "https://example.com/tab-1");
   assert.equal(manifest.entries["orphan-indexed"].lastSeenAsTabId, 9);
 
-  // Restart with the live preview still present: kept. A dead token row: pruned.
+  // Restart without image blobs: original URLs remain recoverable. Only an
+  // invalid URL is pruned; missing screenshots must never destroy recovery.
+  manifest.entries["invalid-token"] = { originalUrl: "javascript:alert(1)" };
+  await chrome.storage.local.set({ [RECOVERY_MANIFEST_KEY]: manifest });
   await seedPreviewToken(manager, "live-token");
   const result = await manager.reconcileAfterRestart(async () => ({
     frozenTabs: { "1": { token: "live-token", originalUrl: "https://example.com/tab-1", title: "Tab 1" } },
-    previewIndex: {}
+    previewIndex: { "orphan-indexed": { originalUrl: "https://indexed.example", updatedAt: 55, tabId: 9 } }
   }));
   assert.equal(result.orphanedPruned, 1);
   manifest = await manager.getRecoveryManifest();
   assert.ok(manifest.entries["live-token"]);
-  assert.equal(manifest.entries["orphan-indexed"], undefined);
+  assert.ok(manifest.entries["orphan-indexed"], "URL recovery survives even when its preview blob is missing");
+  assert.equal(manifest.entries["invalid-token"], undefined);
 
   const recovered = await manager.recoverFromManifest("live-token");
   assert.equal(recovered.url, "https://example.com/tab-1");
