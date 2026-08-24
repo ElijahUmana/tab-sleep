@@ -16,8 +16,8 @@ function run(label, operation) {
   });
 }
 
-chrome.runtime.onInstalled.addListener((details) => {
-  run("installation", () => Promise.all([engine.handleInstalled(details), sessions.reconcileAfterRestart()]));
+chrome.runtime.onInstalled.addListener(() => {
+  run("installation", () => startWithSessions());
 });
 
 // Auto snapshots are debounced (~10 min cadence) and only fire when tab
@@ -26,7 +26,8 @@ function markSessionsDirty() {
   sessions.markDirty();
 }
 
-async function startWithSessions() {
+let startupPromise = null;
+async function performStartWithSessions() {
   await sessions.reconcileAfterRestart(async () => {
     const [state, index] = await Promise.all([
       chrome.storage.session.get(RUNTIME_STATE_KEY),
@@ -35,6 +36,16 @@ async function startWithSessions() {
     return { frozenTabs: state[RUNTIME_STATE_KEY]?.frozenTabs ?? {}, previewIndex: index[PREVIEW_INDEX_KEY] ?? {} };
   });
   await engine.start();
+}
+
+function startWithSessions() {
+  if (!startupPromise) {
+    startupPromise = performStartWithSessions().catch((error) => {
+      startupPromise = null;
+      throw error;
+    });
+  }
+  return startupPromise;
 }
 
 chrome.runtime.onStartup.addListener(() => {

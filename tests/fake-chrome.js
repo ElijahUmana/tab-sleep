@@ -11,6 +11,10 @@ function area(initial = {}) {
     data,
     async get(keys) { return select(data, keys); },
     async getKeys() { return Object.keys(data); },
+    async getBytesInUse(keys) {
+      const selected = select(data, keys);
+      return new TextEncoder().encode(JSON.stringify(selected)).length;
+    },
     async set(values) { Object.assign(data, clone(values)); },
     async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) delete data[key]; },
     async clear() { for (const key of Object.keys(data)) delete data[key]; }

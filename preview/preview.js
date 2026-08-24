@@ -169,9 +169,9 @@ async function loadWhenVisible() {
   return loadPreview();
 }
 
-void loadWhenVisible().catch(async (error) => {
-  meta.textContent = error.message;
-  try {
-    await chrome.runtime.sendMessage({ type: "PREVIEW_FAILED", token, error: error.message });
-  } catch {}
+void loadWhenVisible().catch((error) => {
+  record = { title: "Sleeping tab", capturedAt: null };
+  document.title = "💤 Sleeping tab";
+  meta.textContent = `Frozen preview unavailable · Click to wake · ${error.message}`;
+  void chrome.runtime.sendMessage({ type: "PREVIEW_FAILED", token, error: error.message }).catch(() => {});
 });

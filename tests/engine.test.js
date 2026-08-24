@@ -242,7 +242,7 @@ test("preview navigation transition preserves its snapshot record", async () => 
   assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"].status,"sleeping");
 });
 
-test("preview render failure restores the original page", async () => {
+test("preview render failure stays parked and only explicit wake navigates", async () => {
   const c=clock(), chrome=createFakeChrome([makeTab(1)]); const e=engine(chrome,c); await e.start();
   const token="failed-render-token";
   await seedPreview(e.previewStore, token, { html: "<html><body>broken render</body></html>", capturedAt: c.now() });
@@ -250,10 +250,27 @@ test("preview render failure restores the original page", async () => {
   await chrome.tabs.update(1,{url:previewUrl});
   await e.restorePreview(await chrome.tabs.get(1),token);
   const result=await e.handlePreviewFailed({token,error:"missing visual"},await chrome.tabs.get(1));
-  assert.equal(result.recovered,true);
-  assert.equal(chrome.tabsData[0].url,"https://example.com/tab-1");
-  assert.equal(await e.previewStore.hasPreview(token),false);
-  assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"],undefined);
+  assert.equal(result.parked,true);
+  assert.equal(chrome.tabsData[0].url,previewUrl,"render failure must never navigate on selection");
+  assert.equal(await e.previewStore.hasPreview(token),true,"failed visual remains available for explicit wake/retry");
+  assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"].status,"sleeping");
+  assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"].previewError,"missing visual");
+});
+
+test("missing frozen visual remains parked on selection and wakes only explicitly", async () => {
+  const c=clock(), token="missing-visual-token";
+  const previewUrl=`chrome-extension://tab-sleep-test/preview/preview.html?token=${token}`;
+  const chrome=createFakeChrome([makeTab(1,{active:true,url:previewUrl})],{
+    local:{previewIndex:{[token]:{tabId:1,originalUrl:"https://example.com/original",title:"Original",updatedAt:c.now()}}}
+  });
+  const e=engine(chrome,c); await e.start();
+  await e.restorePreview(await chrome.tabs.get(1),token);
+  assert.equal(chrome.tabsData[0].url,previewUrl,"selecting an orphaned frozen tab must not wake it");
+  assert.equal(chrome.calls.updated.filter(({changes})=>changes.url==="https://example.com/original").length,0);
+  assert.equal(chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["1"].originalUrl,"https://example.com/original");
+  const response=await e.beginWake(token,await chrome.tabs.get(1));
+  assert.equal(response.url,"https://example.com/original","trusted wake can use indexed runtime URL without a visual blob");
+  assert.equal(chrome.tabsData[0].url,previewUrl,"WAKE_BEGIN alone records intent; preview gesture owns navigation");
 });
 
 test("preview does not wake on selection; deliberate wake restores URL", async () => {
