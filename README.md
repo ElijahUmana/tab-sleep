@@ -8,6 +8,93 @@ Its eligibility engine protects visible windows, active media, meaningful networ
 
 ## Core architecture
 
+```mermaid
+flowchart LR
+  subgraph Page[Live page runtime]
+    Input[Trusted input and visibility]
+    Media[Media state]
+    Requests[Requests and consumed streams]
+    Realtime[Realtime message bursts]
+  end
+
+  subgraph Worker[Manifest V3 service worker]
+    Snapshot[Fresh tab and runtime snapshot]
+    Policy[Ordered eligibility engine]
+    Capture[Serialized capture coordinator]
+    Revalidate[Commit-time revalidation]
+    WakeTx[Durable wake transaction]
+  end
+
+  subgraph CapturePlane[Whole-page capture plane]
+    Metrics[CDP Page.getLayoutMetrics]
+    Document[Document screenshot or clipped WebP tiles]
+    Nested[Nested-scroll discovery and stitching]
+    Restore[Scroll-position and marker restoration]
+  end
+
+  subgraph Storage[Content-addressed IndexedDB]
+    Metadata[Preview metadata and geometry]
+    Blobs[SHA-256 image blobs]
+    Budgets[Per-tab and profile budgets with LRU]
+  end
+
+  subgraph Parked[Inert parked runtime]
+    Tiles[Natural-height document tile stack]
+    Regions[Independent frozen scroll regions]
+    Gesture[Trusted click, Enter, or Space]
+  end
+
+  Input --> Snapshot
+  Media --> Snapshot
+  Requests --> Snapshot
+  Realtime --> Snapshot
+  Snapshot --> Policy
+  Policy -->|eligible| Capture
+  Capture --> Metrics
+  Metrics --> Document
+  Metrics --> Nested
+  Nested --> Restore
+  Document --> Revalidate
+  Restore --> Revalidate
+  Revalidate -->|still eligible| Metadata
+  Revalidate -->|atomic preview commit| Blobs
+  Metadata --> Budgets
+  Blobs --> Budgets
+  Metadata --> Tiles
+  Blobs --> Tiles
+  Metadata --> Regions
+  Blobs --> Regions
+  Tiles --> Gesture
+  Regions --> Gesture
+  Gesture --> WakeTx
+  WakeTx -->|same-tab location.replace| Page
+```
+
+The service worker treats freezing as a checked transaction: runtime evidence flows into policy, capture obtains the complete visual state, and the final eligibility gate runs only after capture has restored the live page. The parked runtime then reads immutable geometry and content-addressed blobs without retaining the original renderer.
+
+### Freeze and wake state machine
+
+```mermaid
+stateDiagram-v2
+  [*] --> Awake
+  Awake --> Candidate: hidden and quiet for the full interval
+  Candidate --> Awake: visibility, work, media, or navigation gate
+  Candidate --> Capturing: all hard gates pass
+  Capturing --> Awake: capture unavailable or state changed
+  Capturing --> Revalidating: document and nested regions captured
+  Revalidating --> Awake: commit-time gate fails
+  Revalidating --> Freezing: preview transaction persisted
+  Freezing --> Sleeping: parked URL commits and paints
+  Freezing --> Awake: parked navigation fails
+  Sleeping --> Sleeping: tab selected or frozen surface scrolled
+  Sleeping --> Waking: trusted gesture or explicit wake command
+  Waking --> LiveCommitted: original URL commits
+  Waking --> Sleeping: interrupted wake restores retry state
+  LiveCommitted --> Awake: preview deleted after load completes
+```
+
+Selection is intentionally a self-transition in `Sleeping`; it changes browser focus but not application execution. Cleanup occurs only after the original page has committed and completed loading, so an interrupted wake can return to the same parked record.
+
 ### Work-aware eligibility
 
 Tab Sleep does not equate “background” with “idle.” Every freeze decision is derived from fresh browser topology and page-runtime signals:
