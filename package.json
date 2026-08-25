@@ -1,7 +1,13 @@
 {
   "name": "tab-sleep",
   "version": "4.2.1",
+  "description": "Work-aware Chrome tab runtime with scrollable whole-page frozen previews.",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ElijahUmana/tab-sleep.git"
+  },
   "type": "module",
   "scripts": {
     "check": "node scripts/check.js",

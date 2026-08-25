@@ -1,194 +1,224 @@
 # Tab Sleep
 
-Tab Sleep is a private Chrome Manifest V3 extension that replaces quiet background websites with local frozen previews, releasing their live page contexts while keeping a visual you can inspect before waking the site.
+Tab Sleep is a Chrome Manifest V3 tab-runtime that replaces inactive web applications with locally rendered, fully scrollable frozen pages—without waking them when selected.
 
-## What it does
+Unlike native tab discarders, Tab Sleep does not turn selection into an implicit reload. It separates **inspection** from **execution**: selecting a sleeping tab shows its frozen state immediately; a trusted click anywhere, Enter, or Space deliberately restores the live application in the same tab.
 
-- Sleeps hidden, quiet HTTP(S) tabs after a configurable idle period.
-- Keeps every tab selected in an open Chrome window awake, including tabs shown in tiled windows.
-- Keeps loading, audible, protected, and actively working tabs awake.
-- Tracks substantial network work and actively consumed streaming responses without relying on UI words such as “Thinking” or “Loading.”
-- Ignores persistent socket plumbing, quick keep-alive polls, title changes, and cosmetic DOM churn.
-- Stores frozen visuals only in the current Chrome profile.
-- Shows the frozen visual immediately when a sleeping tab is selected.
-- Wakes the original website only after a real click anywhere on the frozen page or keyboard activation.
-- Never discards the lightweight preview page, preventing activation spinners and automatic reloads.
+Its eligibility engine protects visible windows, active media, meaningful network work, and streaming responses. Its capture engine records entire documents plus significant nested scroll surfaces used by application-style sites. Its parked runtime reconstructs those surfaces from local IndexedDB blobs while the original renderer remains gone.
 
-## Interaction model
+## Core architecture
 
-1. A supported tab becomes hidden.
-2. Tab Sleep waits for the entire configured idle interval.
-3. Safety and work gates are checked again immediately before sleeping.
-4. A local visual record is prepared.
-5. The live site is replaced by `preview/preview.html`.
-6. Selecting the tab displays the frozen visual without loading the original website.
-7. A trusted click anywhere on the frozen visual (or Enter/Space) wakes the page: a durable wake transaction is recorded first, then the preview tab navigates itself to the original URL. The frozen visual stays fully on screen until the live page commits — no overlay, spinner, or blank flash beyond Chrome's own progress.
-8. The frozen record is deleted only after the live page confirms it loaded. If the site fails (DNS/network error or commit timeout), the frozen visual is restored automatically with a retry affordance, preserving the original URL and screenshot.
+### Work-aware eligibility
+
+Tab Sleep does not equate “background” with “idle.” Every freeze decision is derived from fresh browser topology and page-runtime signals:
+
+- selected tabs in every non-minimized Chrome window remain live, including tiled windows;
+- loading, audible, pinned, protected, and non-discardable tabs can remain live;
+- actively consumed streaming responses remain protected for their full duration;
+- substantial requests delay sleep, while quick polling and stale transport plumbing do not;
+- persistent WebSockets and EventSources are not treated as work unless messages are actively arriving;
+- the complete eligibility contract is revalidated immediately before the live renderer is replaced.
+
+The engine does not inspect UI words such as “Thinking,” “Working,” or “Loading.” It tracks runtime progress rather than presentation text.
 
 ## Safety invariants
 
-Tab Sleep refuses to sleep a tab when any of these conditions apply:
+Tab Sleep never bypasses these constraints, including during manual or bulk freezes:
 
-- The tab is selected in a non-minimized Chrome window.
-- The tab is loading.
-- The page activity tracker is missing or stale.
-- Audio or video is playing.
-- Chrome reports the tab as audible.
-- A substantial HTTP request is in flight.
-- An actively consumed streaming response is making progress.
-- The tab is protected, pinned (when configured), or marked non-discardable (when configured).
-- A valid local visual cannot be prepared.
+- no selected tab in a non-minimized window is replaced;
+- no tab with stale activity proof is assumed idle;
+- no actively progressing request, stream, media session, or navigation is interrupted;
+- every candidate is revalidated after capture and immediately before replacement;
+- a missing or damaged frozen visual never turns tab selection into an implicit wake;
+- the original URL remains recoverable until a deliberate wake completes;
+- preview pages are never natively discarded;
+- capture never leaves temporary scroll positions or DOM markers in the live page.
 
-Persistent WebSockets and EventSources do not count as work by themselves. Short background requests do not restart the idle timer. A long response that is actively consumed as a stream remains protected beyond the ordinary request window.
+### Entire-page capture
 
-## Frozen visuals
+Every freeze acquires a fresh whole-page visual. A cached viewport is never promoted into a sleeping page.
 
-Tab Sleep uses two local preview paths:
+The capture pipeline uses the Chrome DevTools Protocol through `chrome.debugger`:
 
-### Bitmap preview
+1. attach to the background tab without focusing or selecting it;
+2. measure the document through `Page.getLayoutMetrics`;
+3. capture the entire document with `Page.captureScreenshot` and `captureBeyondViewport`;
+4. split tall documents into clipped WebP tiles instead of allocating one unbounded bitmap;
+5. discover significant nested scroll containers through page geometry and overflow behavior;
+6. scroll and capture each nested region to its stable reachable extent;
+7. restore every live scroll position and temporary marker before detaching;
+8. persist the document shell, region geometry, and image tiles transactionally.
 
-When a page was visibly selected and stable, Tab Sleep captures its viewport as a full-resolution PNG using `chrome.tabs.captureVisibleTab`. The preview decodes the PNG into a canvas before display.
+This supports conventional documents and application-style pages whose primary content scrolls inside internal panes rather than the document root.
 
-### Script-free DOM fallback
+### Frozen application runtime
 
-Chrome cannot capture an arbitrary background tab through the Tabs API. For a never-visible tab, Tab Sleep creates a detached clone of the document, removes executable and embedded content, inserts the original base URL, and renders the result in a fully sandboxed `srcdoc` iframe.
+The parked extension page reconstructs the captured page from same-origin IndexedDB blobs:
 
-The DOM fallback is best-effort. Canvas pixels, closed shadow roots, cross-origin frames, runtime-only form state, and some authenticated or blob-backed resources cannot be reproduced exactly.
+- ordinary full-page captures render at natural document height;
+- tall captures render as stacked tiles, bounding decode memory;
+- nested application panes are recreated as independently scrollable frozen regions;
+- the status pill remains fixed and never intercepts input;
+- selecting the tab does not load the original site;
+- no hidden duplicate tab, retained renderer, background preload, or native discard is used.
+
+The frozen page is deliberately inert. It preserves rendered state for inspection, not application execution.
+
+### Transactional wake continuity
+
+Wake is a durable state transition rather than a best-effort navigation:
+
+1. a trusted click, Enter, Space, or explicit bulk command begins wake;
+2. the service worker records a durable `WAKING` transaction before navigation;
+3. the frozen page calls `location.replace(originalUrl)` in the same tab;
+4. the frozen visual remains present until Chrome commits the new document;
+5. the preview record is deleted only after the live URL finishes loading;
+6. a failed or interrupted wake restores the parked page with retry state intact.
+
+Service-worker and browser restarts reconcile unfinished wake transactions from durable storage.
+
+### Content-addressed preview storage
+
+Frozen visuals live in IndexedDB, separated into metadata and binary blob stores.
+
+- SHA-256 content hashes deduplicate identical images;
+- metadata and all referenced blobs commit in one transaction;
+- preview records use per-tab and profile-wide storage budgets;
+- least-recently-used cleanup removes old records when budgets are exceeded;
+- orphaned metadata and blobs are reconciled after interruption;
+- legacy Base64 records migrate only when their exact token is opened, preventing startup from materializing an old multi-gigabyte store.
+
+Preview content stays inside the current Chrome profile and is never sent to an application server.
+
+## Interaction model
+
+1. A supported tab becomes hidden and quiet.
+2. Tab Sleep waits for the configured idle interval.
+3. The eligibility engine evaluates browser topology, page activity, media, requests, and stream progress.
+4. The engine acquires a fresh entire-page capture and revalidates eligibility.
+5. The original page is replaced with `preview/preview.html`, releasing its live renderer.
+6. Selecting the tab shows the scrollable frozen page without waking the site.
+7. A trusted click anywhere, Enter, or Space restores the original URL in the same tab.
+8. The frozen record is retained until the live page successfully commits.
+
+## Controls
+
+The popup exposes the current state first and keeps power controls behind progressive disclosure:
+
+- enable or pause automatic sleeping;
+- protect the current tab;
+- inspect why the current tab remains awake;
+- freeze eligible tabs in the current window, other tabs, or every window;
+- wake parked tabs explicitly;
+- keep the current domain awake temporarily.
+
+The settings page is limited to sleep policy, site rules, and power behavior. It does not contain session archives, activity history, or unrelated management surfaces.
+
+## Site rules and power behavior
+
+Rules support domain, URL-prefix, and regular-expression patterns. Deny rules take precedence over allow rules when both match.
+
+Optional policy controls include:
+
+- keep pinned tabs awake;
+- keep audible or muted-playing tabs awake;
+- respect Chrome’s non-discardable flag;
+- wait for navigation to finish;
+- pause sleeping while charging;
+- pause sleeping while offline;
+- apply a battery threshold;
+- temporarily keep a tab, domain, window, or group awake.
 
 ## Installation
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode**.
-3. Click **Load unpacked**.
-4. Select this repository directory.
-5. Pin Tab Sleep from Chrome’s Extensions menu if desired.
+Requirements:
 
-The installed extension ID for this checkout is currently:
+- Chrome 150 or newer;
+- Developer mode enabled in `chrome://extensions`.
 
-```text
-hhicpdhnbnakjogjbaldajnddmpidbpi
-```
+Install from source:
 
-## Updating an unpacked installation
+1. Clone this repository.
+2. Open `chrome://extensions`.
+3. Enable **Developer mode**.
+4. Click **Load unpacked**.
+5. Select the repository directory.
 
-After changing source files:
+After updating the source, click **Reload** on the Tab Sleep extension card in every Chrome profile that uses it. Confirm the displayed version matches `manifest.json`.
 
-1. Run the verification commands below.
-2. Open `chrome://extensions` in each Chrome profile using the extension.
-3. Click **Reload** on the Tab Sleep card.
-4. Confirm the displayed version matches `manifest.json`.
+## Permissions
 
-Existing live pages receive fresh activity trackers after reload. Older callbacks retire automatically.
+Tab Sleep’s permissions correspond directly to its runtime model:
 
-## Settings
+- `debugger`: background whole-page and nested-scroll capture through CDP;
+- `tabs`: topology, tab metadata, and same-tab navigation;
+- `scripting`: page activity probes, scroll-container capture, and inert DOM fallback;
+- `storage` / `unlimitedStorage`: policy state and local content-addressed frozen visuals;
+- `alarms`: periodic eligibility scans;
+- `webRequest`: request-lifecycle fences;
+- `contextMenus`: explicit freeze, wake, and temporary keep-awake commands;
+- `<all_urls>`: activity tracking and capture coverage for supported HTTP(S) pages.
 
-Open **Tab Sleep → Settings** to configure:
+Tab Sleep never calls `chrome.tabs.discard()`.
 
-- Automatic sleep on/off
-- Idle threshold from 0.5 to 1,440 minutes
-- Keep pinned tabs awake
-- Keep audible tabs awake
-- Respect Chrome’s non-discardable flag
-- Wait for navigation to finish
+## Fallback behavior
 
-The popup also lets you protect the current page and manually freeze eligible inactive tabs. Manual freeze bypasses idle age only; it never bypasses visibility, work, media, loading, or visual-validity gates.
+If CDP capture is unavailable—for example, because DevTools already owns the target—Tab Sleep can produce a detached, script-free DOM snapshot. Scripts, embedded frames, media, event-handler attributes, and meta refresh are removed before the clone is rendered in a sandboxed `srcdoc` frame.
 
-## Architecture
-
-```text
-content/activity.js
-  └─ trusted user input, media state, liveness heartbeat
-
-content/page-activity-bridge.js (MAIN world)
-  └─ transport liveness and streaming-consumer progress
-
-service-worker.js
-  └─ Chrome event adapters and async message transport
-
-lib/engine.js
-  ├─ serialized runtime state
-  ├─ request fences
-  ├─ capture and preview records
-  ├─ freeze/wake transactions
-  └─ worker-start reconciliation
-
-lib/policy.js
-  └─ ordered safety/work/idle eligibility gates
-
-preview/
-  ├─ canvas bitmap renderer
-  ├─ sandboxed DOM fallback
-  └─ click-anywhere wake surface
-```
-
-Frozen preview image blobs live in IndexedDB with content-addressed deduplication and bounded per-tab/profile budgets. Runtime signals live in `chrome.storage.session`; settings, metrics, the preview index, and durable wake transactions live in `chrome.storage.local`. Legacy Base64 previews migrate only when their exact token is opened; extension startup never scans or decodes the old image store, regardless of profile size.
+The fallback is inert and best-effort. Canvas pixels, closed shadow roots, cross-origin frames, and runtime-only rendering may not be reproducible without CDP capture. A missing visual never causes selection to wake the original site; the tab remains parked and explicitly wakeable.
 
 ## Development
 
-Requirements:
-
-- Chrome 150 or newer
-- Node.js 20 or newer
-
-Install dependencies are not required; the project uses Node’s built-in test runner.
+Tab Sleep has no runtime package dependencies. Development requires Node.js 20 or newer.
 
 ```bash
 npm test
 npm run check
 ```
 
-`npm test` covers policy, engine lifecycle races, preview preservation and recovery, settings normalization, request plumbing, and long streaming-response protection.
+The test suite covers:
 
-`npm run check` validates:
+- multi-window visibility and commit-time revalidation;
+- request fences, polling, sockets, and consumed streaming responses;
+- whole-document and tall-page tiled capture;
+- Gmail-style nested scroll stitching and scroll-position restoration;
+- rejection of cached viewport-only sleeping visuals;
+- IndexedDB transactions, deduplication, budgets, migration, and reconciliation;
+- parked-page selection behavior;
+- durable same-tab wake, failure recovery, and restart reconciliation;
+- rule precedence and temporary keep-awake scopes.
 
-- Manifest version and permissions
-- Referenced assets
-- JavaScript syntax
-- CSP-safe HTML and scripts
-- Async message-channel handling
-- No preview discard calls
-- Preview startup, render acknowledgment, and click-to-wake invariants
+`npm run check` validates manifest permissions, referenced assets, syntax, CSP constraints, capture invariants, scrollable preview rendering, and wake semantics.
 
-## Troubleshooting
+## Source map
 
-### A tab never sleeps
+```text
+content/
+  activity.js              trusted input, visibility, and media signals
+  page-activity-bridge.js  request, stream, and realtime progress tracking
 
-Check whether it is:
+lib/
+  policy.js                ordered eligibility engine
+  engine.js                serialized freeze/wake lifecycle
+  full-page-capture.js     CDP document and nested-scroll capture
+  preview-store.js         transactional content-addressed IndexedDB storage
+  rules.js                 domain, prefix, regex, and temporary rules
 
-- selected in an open window;
-- pinned while **Keep pinned tabs awake** is enabled;
-- loading, audible, or playing media;
-- actively receiving/consuming a response;
-- missing a fresh activity signal.
+preview/
+  preview.js               frozen document and nested-region reconstruction
+  preview.css              natural-height and independent-scroll surfaces
 
-The popup reports aggregate state, and `metrics.lastScanReasons` in extension local storage records the latest policy outcomes.
-
-### A frozen visual is unavailable
-
-The tab remains parked and never wakes from selection alone. Click anywhere on the parked page, or press Enter or Space, to wake the original URL explicitly.
-
-### Extension context invalidated
-
-This can appear for callbacks from an older content-script generation immediately after reloading an unpacked extension. The current generation supersedes older callbacks and re-establishes its liveness heartbeat.
-
-### A DOM fallback looks different
-
-The fallback is script-free and cannot exactly preserve every browser rendering primitive. Visit the page once while visible to let Tab Sleep cache a bitmap preview.
-
-## Permissions
-
-- `tabs`: tab metadata, navigation, and visible-tab capture
-- `scripting`: tracker injection, signal probes, and detached DOM fallback capture
-- `storage`: settings, runtime state, metrics, and local frozen visuals
-- `alarms`: periodic eligibility scans
-- `webRequest`: request lifecycle fences
-- `unlimitedStorage`: local preview records without the standard extension storage quota
-- `<all_urls>`: supported-page tracking and capture coverage
+service-worker.js          Chrome event adapters and command routing
+```
 
 ## Privacy
 
-Tab Sleep does not sync preview records or send them to an application server. Frozen visuals remain in the Chrome profile’s local extension storage and are deleted when their preview is cleared or woken.
+All frozen visuals and runtime state stay in the local Chrome profile. Tab Sleep has no telemetry backend, analytics endpoint, account system, or cloud preview synchronization.
+
+## License
+
+MIT License. See [LICENSE](LICENSE).
 
 ## Version
 
-Current version: **4.1.1**
+Current version: **4.2.1**
