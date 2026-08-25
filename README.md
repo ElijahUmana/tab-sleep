@@ -8,23 +8,98 @@ Its eligibility engine protects visible windows, active media, meaningful networ
 
 ## Core architecture
 
-### Freeze pipeline
+```mermaid
+flowchart TB
+  subgraph Signals["1 · LIVE RUNTIME SIGNALS"]
+    direction LR
+    Topology["Window and tab<br/>topology"]
+    Activity["Input, visibility,<br/>and media"]
+    Network["Requests, streams,<br/>and realtime traffic"]
+  end
 
-![Freeze transaction: runtime signals flow through policy, whole-page capture, restoration, commit-time revalidation, and atomic preview storage.](docs/diagrams/freeze-pipeline.svg)
+  subgraph Decision["2 · ELIGIBILITY TRANSACTION"]
+    direction TB
+    Snapshot["Fresh runtime snapshot"]
+    Policy["Ordered policy gates"]
+    Coordinator["Serialized capture coordinator"]
+    Snapshot --> Policy -->|eligible| Coordinator
+  end
 
-Runtime signals cover tab topology, trusted input, visibility, media, requests, consumed streams, and realtime traffic. Policy applies protection rules and the idle threshold. Capture produces document tiles and stitched nested-scroll surfaces before restoring every temporary change to the live page. Only then does commit-time revalidation permit the metadata, geometry, and deduplicated SHA-256 blobs to enter IndexedDB.
+  subgraph Capture["3 · WHOLE-PAGE CAPTURE"]
+    direction TB
+    CDP["CDP layout metrics"]
+    Document["Document capture<br/>or clipped WebP tiles"]
+    Nested["Nested-scroll discovery<br/>and viewport stitching"]
+    Restore["Restore scroll positions<br/>and DOM markers"]
+    CDP --> Document
+    CDP --> Nested --> Restore
+  end
 
-### Parked runtime and wake path
+  Gate{"Still eligible<br/>after capture?"}
 
-![Parked runtime and wake path: inspection remains frozen while trusted intent creates a durable same-tab wake transaction.](docs/diagrams/parked-wake.svg)
+  subgraph Storage["4 · ATOMIC INDEXEDDB COMMIT"]
+    direction LR
+    Metadata["Preview metadata<br/>and geometry"]
+    Blobs["SHA-256 image blobs<br/>with deduplication"]
+    Budget["Per-tab and profile<br/>LRU budgets"]
+    Metadata --> Budget
+    Blobs --> Budget
+  end
 
-Selecting or scrolling the parked page remains inside `Parked`; the original renderer stays gone. Only a trusted click, Enter, Space, or explicit command enters the wake path. The durable transaction preserves the original URL before navigation, and cleanup waits until the live page completes loading.
+  subgraph Parked["5 · INERT PARKED RUNTIME"]
+    direction LR
+    Tiles["Natural-height<br/>document tiles"]
+    Regions["Independent frozen<br/>scroll regions"]
+  end
+
+  Wake["Trusted click, Enter,<br/>Space, or explicit command"]
+  Transaction["Durable WAKING transaction"]
+  Replace["Same-tab location.replace"]
+  Live["Live application restored"]
+
+  Topology --> Snapshot
+  Activity --> Snapshot
+  Network --> Snapshot
+  Coordinator --> CDP
+  Document --> Gate
+  Restore --> Gate
+  Gate -->|yes| Metadata
+  Gate -->|yes| Blobs
+  Metadata --> Tiles
+  Blobs --> Tiles
+  Metadata --> Regions
+  Blobs --> Regions
+  Tiles --> Wake
+  Regions --> Wake
+  Wake --> Transaction --> Replace --> Live
+```
+
+The numbered stages run from top to bottom: runtime evidence enters policy, capture obtains the complete visual state, and the final eligibility gate runs only after capture has restored the live page. The parked runtime then reads immutable geometry and content-addressed blobs without retaining the original renderer.
 
 ### Freeze and wake state machine
 
-![Transactional lifecycle from awake through capture and sleeping to same-tab restoration, with explicit recovery invariants.](docs/diagrams/lifecycle.svg)
+```mermaid
+stateDiagram-v2
+  direction TB
 
-The diagram shows the successful transaction path without compressing recovery edges over its labels. Before `SLEEPING`, a failed gate, capture, or parked navigation returns to `AWAKE`. Selecting or scrolling stays in `SLEEPING`. An interrupted `WAKING` transition returns to `SLEEPING` with retry state intact; successful loading reaches `AWAKE · RESTORED` and deletes the preview.
+  [*] --> Awake
+  Awake --> Candidate: full idle interval
+  Candidate --> Capturing: hard gates pass
+  Capturing --> Revalidating: capture complete
+  Revalidating --> Freezing: still eligible
+  Freezing --> Sleeping: preview painted
+  Sleeping --> Waking: trusted wake
+  Waking --> Awake: live load complete
+
+  Candidate --> Awake: gate fails
+  Capturing --> Awake: capture fails or state changes
+  Revalidating --> Awake: final gate fails
+  Freezing --> Awake: parked navigation fails
+  Sleeping --> Sleeping: select tab or scroll preview
+  Waking --> Sleeping: wake interrupted
+```
+
+The primary path is vertical. Selection is intentionally a self-transition in `Sleeping`: it changes browser focus but not application execution. Preview cleanup occurs only after the original page completes loading, so an interrupted wake returns to the same parked record.
 
 ### Work-aware eligibility
 
