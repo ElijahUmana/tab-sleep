@@ -9,91 +9,97 @@ Its eligibility engine protects visible windows, active media, meaningful networ
 ## Core architecture
 
 ```mermaid
-flowchart LR
-  subgraph Page[Live page runtime]
-    Input[Trusted input and visibility]
-    Media[Media state]
-    Requests[Requests and consumed streams]
-    Realtime[Realtime message bursts]
+flowchart TB
+  subgraph Signals["1 · LIVE RUNTIME SIGNALS"]
+    direction LR
+    Topology["Window and tab<br/>topology"]
+    Activity["Input, visibility,<br/>and media"]
+    Network["Requests, streams,<br/>and realtime traffic"]
   end
 
-  subgraph Worker[Manifest V3 service worker]
-    Snapshot[Fresh tab and runtime snapshot]
-    Policy[Ordered eligibility engine]
-    Capture[Serialized capture coordinator]
-    Revalidate[Commit-time revalidation]
-    WakeTx[Durable wake transaction]
+  subgraph Decision["2 · ELIGIBILITY TRANSACTION"]
+    direction TB
+    Snapshot["Fresh runtime snapshot"]
+    Policy["Ordered policy gates"]
+    Coordinator["Serialized capture coordinator"]
+    Snapshot --> Policy -->|eligible| Coordinator
   end
 
-  subgraph CapturePlane[Whole-page capture plane]
-    Metrics[CDP Page.getLayoutMetrics]
-    Document[Document screenshot or clipped WebP tiles]
-    Nested[Nested-scroll discovery and stitching]
-    Restore[Scroll-position and marker restoration]
+  subgraph Capture["3 · WHOLE-PAGE CAPTURE"]
+    direction TB
+    CDP["CDP layout metrics"]
+    Document["Document capture<br/>or clipped WebP tiles"]
+    Nested["Nested-scroll discovery<br/>and viewport stitching"]
+    Restore["Restore scroll positions<br/>and DOM markers"]
+    CDP --> Document
+    CDP --> Nested --> Restore
   end
 
-  subgraph Storage[Content-addressed IndexedDB]
-    Metadata[Preview metadata and geometry]
-    Blobs[SHA-256 image blobs]
-    Budgets[Per-tab and profile budgets with LRU]
+  Gate{"Still eligible<br/>after capture?"}
+
+  subgraph Storage["4 · ATOMIC INDEXEDDB COMMIT"]
+    direction LR
+    Metadata["Preview metadata<br/>and geometry"]
+    Blobs["SHA-256 image blobs<br/>with deduplication"]
+    Budget["Per-tab and profile<br/>LRU budgets"]
+    Metadata --> Budget
+    Blobs --> Budget
   end
 
-  subgraph Parked[Inert parked runtime]
-    Tiles[Natural-height document tile stack]
-    Regions[Independent frozen scroll regions]
-    Gesture[Trusted click, Enter, or Space]
+  subgraph Parked["5 · INERT PARKED RUNTIME"]
+    direction LR
+    Tiles["Natural-height<br/>document tiles"]
+    Regions["Independent frozen<br/>scroll regions"]
   end
 
-  Input --> Snapshot
-  Media --> Snapshot
-  Requests --> Snapshot
-  Realtime --> Snapshot
-  Snapshot --> Policy
-  Policy -->|eligible| Capture
-  Capture --> Metrics
-  Metrics --> Document
-  Metrics --> Nested
-  Nested --> Restore
-  Document --> Revalidate
-  Restore --> Revalidate
-  Revalidate -->|still eligible| Metadata
-  Revalidate -->|atomic preview commit| Blobs
-  Metadata --> Budgets
-  Blobs --> Budgets
+  Wake["Trusted click, Enter,<br/>Space, or explicit command"]
+  Transaction["Durable WAKING transaction"]
+  Replace["Same-tab location.replace"]
+  Live["Live application restored"]
+
+  Topology --> Snapshot
+  Activity --> Snapshot
+  Network --> Snapshot
+  Coordinator --> CDP
+  Document --> Gate
+  Restore --> Gate
+  Gate -->|yes| Metadata
+  Gate -->|yes| Blobs
   Metadata --> Tiles
   Blobs --> Tiles
   Metadata --> Regions
   Blobs --> Regions
-  Tiles --> Gesture
-  Regions --> Gesture
-  Gesture --> WakeTx
-  WakeTx -->|same-tab location.replace| Page
+  Tiles --> Wake
+  Regions --> Wake
+  Wake --> Transaction --> Replace --> Live
 ```
 
-The service worker treats freezing as a checked transaction: runtime evidence flows into policy, capture obtains the complete visual state, and the final eligibility gate runs only after capture has restored the live page. The parked runtime then reads immutable geometry and content-addressed blobs without retaining the original renderer.
+The numbered stages run from top to bottom: runtime evidence enters policy, capture obtains the complete visual state, and the final eligibility gate runs only after capture has restored the live page. The parked runtime then reads immutable geometry and content-addressed blobs without retaining the original renderer.
 
 ### Freeze and wake state machine
 
 ```mermaid
 stateDiagram-v2
+  direction TB
+
   [*] --> Awake
-  Awake --> Candidate: hidden and quiet for the full interval
-  Candidate --> Awake: visibility, work, media, or navigation gate
-  Candidate --> Capturing: all hard gates pass
-  Capturing --> Awake: capture unavailable or state changed
-  Capturing --> Revalidating: document and nested regions captured
-  Revalidating --> Awake: commit-time gate fails
-  Revalidating --> Freezing: preview transaction persisted
-  Freezing --> Sleeping: parked URL commits and paints
+  Awake --> Candidate: full idle interval
+  Candidate --> Capturing: hard gates pass
+  Capturing --> Revalidating: capture complete
+  Revalidating --> Freezing: still eligible
+  Freezing --> Sleeping: preview painted
+  Sleeping --> Waking: trusted wake
+  Waking --> Awake: live load complete
+
+  Candidate --> Awake: gate fails
+  Capturing --> Awake: capture fails or state changes
+  Revalidating --> Awake: final gate fails
   Freezing --> Awake: parked navigation fails
-  Sleeping --> Sleeping: tab selected or frozen surface scrolled
-  Sleeping --> Waking: trusted gesture or explicit wake command
-  Waking --> LiveCommitted: original URL commits
-  Waking --> Sleeping: interrupted wake restores retry state
-  LiveCommitted --> Awake: preview deleted after load completes
+  Sleeping --> Sleeping: select tab or scroll preview
+  Waking --> Sleeping: wake interrupted
 ```
 
-Selection is intentionally a self-transition in `Sleeping`; it changes browser focus but not application execution. Cleanup occurs only after the original page has committed and completed loading, so an interrupted wake can return to the same parked record.
+The primary path is vertical. Selection is intentionally a self-transition in `Sleeping`: it changes browser focus but not application execution. Preview cleanup occurs only after the original page completes loading, so an interrupted wake returns to the same parked record.
 
 ### Work-aware eligibility
 
