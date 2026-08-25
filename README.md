@@ -8,73 +8,49 @@ Its eligibility engine protects visible windows, active media, meaningful networ
 
 ## Core architecture
 
+### Freeze pipeline
+
 ```mermaid
 flowchart TB
-  subgraph Signals["1 · LIVE RUNTIME SIGNALS"]
-    direction LR
-    Topology["Window and tab<br/>topology"]
-    Activity["Input, visibility,<br/>and media"]
-    Network["Requests, streams,<br/>and realtime traffic"]
-  end
+  Signals["1 · LIVE RUNTIME SIGNALS<br/>tab topology · input · media · network"]
+  Decision["2 · FRESH SNAPSHOT + ORDERED POLICY<br/>visibility · work · rules · idle threshold"]
+  Capture["3 · CDP WHOLE-PAGE CAPTURE<br/>document tiles · nested-scroll stitching"]
+  Restore["RESTORE LIVE PAGE<br/>scroll positions · temporary markers"]
+  Gate{"COMMIT-TIME<br/>REVALIDATION"}
+  Commit["4 · ATOMIC INDEXEDDB COMMIT<br/>geometry · SHA-256 blobs · LRU budgets"]
 
-  subgraph Decision["2 · ELIGIBILITY TRANSACTION"]
-    direction TB
-    Snapshot["Fresh runtime snapshot"]
-    Policy["Ordered policy gates"]
-    Coordinator["Serialized capture coordinator"]
-    Snapshot --> Policy -->|eligible| Coordinator
-  end
-
-  subgraph Capture["3 · WHOLE-PAGE CAPTURE"]
-    direction TB
-    CDP["CDP layout metrics"]
-    Document["Document capture<br/>or clipped WebP tiles"]
-    Nested["Nested-scroll discovery<br/>and viewport stitching"]
-    Restore["Restore scroll positions<br/>and DOM markers"]
-    CDP --> Document
-    CDP --> Nested --> Restore
-  end
-
-  Gate{"Still eligible<br/>after capture?"}
-
-  subgraph Storage["4 · ATOMIC INDEXEDDB COMMIT"]
-    direction LR
-    Metadata["Preview metadata<br/>and geometry"]
-    Blobs["SHA-256 image blobs<br/>with deduplication"]
-    Budget["Per-tab and profile<br/>LRU budgets"]
-    Metadata --> Budget
-    Blobs --> Budget
-  end
-
-  subgraph Parked["5 · INERT PARKED RUNTIME"]
-    direction LR
-    Tiles["Natural-height<br/>document tiles"]
-    Regions["Independent frozen<br/>scroll regions"]
-  end
-
-  Wake["Trusted click, Enter,<br/>Space, or explicit command"]
-  Transaction["Durable WAKING transaction"]
-  Replace["Same-tab location.replace"]
-  Live["Live application restored"]
-
-  Topology --> Snapshot
-  Activity --> Snapshot
-  Network --> Snapshot
-  Coordinator --> CDP
-  Document --> Gate
+  Signals --> Decision
+  Decision -->|eligible| Capture
+  Capture --> Restore
   Restore --> Gate
-  Gate -->|yes| Metadata
-  Gate -->|yes| Blobs
-  Metadata --> Tiles
-  Blobs --> Tiles
-  Metadata --> Regions
-  Blobs --> Regions
-  Tiles --> Wake
-  Regions --> Wake
-  Wake --> Transaction --> Replace --> Live
+  Gate -->|still eligible| Commit
 ```
 
-The numbered stages run from top to bottom: runtime evidence enters policy, capture obtains the complete visual state, and the final eligibility gate runs only after capture has restored the live page. The parked runtime then reads immutable geometry and content-addressed blobs without retaining the original renderer.
+Runtime evidence enters policy, capture obtains the complete visual state, and the final eligibility gate runs only after capture has restored every temporary change to the live page.
+
+### Parked runtime and wake path
+
+```mermaid
+flowchart TB
+  Store["CONTENT-ADDRESSED PREVIEW RECORD<br/>metadata + geometry · deduplicated image blobs"]
+  Parked["5 · INERT PARKED RUNTIME<br/>natural-height tiles · independent frozen regions"]
+  Inspect["SELECT OR SCROLL<br/>remain frozen · original renderer stays gone"]
+  Gesture["TRUSTED WAKE<br/>click · Enter · Space · explicit command"]
+  Transaction["DURABLE WAKING TRANSACTION<br/>persist original URL before navigation"]
+  Replace["SAME-TAB location.replace"]
+  Live["LIVE PAGE COMMITS AND LOADS"]
+  Cleanup["DELETE PREVIEW RECORD"]
+
+  Store --> Parked
+  Parked --> Inspect
+  Parked --> Gesture
+  Gesture --> Transaction
+  Transaction --> Replace
+  Replace --> Live
+  Live --> Cleanup
+```
+
+The parked runtime reads immutable IndexedDB records without retaining the original renderer. Inspection never crosses into the wake path; only a trusted gesture or explicit command creates the durable transaction and restores the application.
 
 ### Freeze and wake state machine
 
@@ -83,23 +59,23 @@ stateDiagram-v2
   direction TB
 
   [*] --> Awake
-  Awake --> Candidate: full idle interval
-  Candidate --> Capturing: hard gates pass
+  Awake --> Candidate: idle complete
+  Candidate --> Capturing: gates pass
   Capturing --> Revalidating: capture complete
   Revalidating --> Freezing: still eligible
   Freezing --> Sleeping: preview painted
   Sleeping --> Waking: trusted wake
   Waking --> Awake: live load complete
 
-  Candidate --> Awake: gate fails
-  Capturing --> Awake: capture fails or state changes
-  Revalidating --> Awake: final gate fails
-  Freezing --> Awake: parked navigation fails
-  Sleeping --> Sleeping: select tab or scroll preview
-  Waking --> Sleeping: wake interrupted
+  Candidate --> Awake: blocked
+  Capturing --> Awake: capture aborts
+  Revalidating --> Awake: gate fails
+  Freezing --> Awake: park fails
+  Sleeping --> Sleeping: inspect
+  Waking --> Sleeping: interrupted
 ```
 
-The primary path is vertical. Selection is intentionally a self-transition in `Sleeping`: it changes browser focus but not application execution. Preview cleanup occurs only after the original page completes loading, so an interrupted wake returns to the same parked record.
+Selection is intentionally a self-transition in `Sleeping`: it changes browser focus but not application execution. Preview cleanup occurs only after the original page completes loading, so an interrupted wake returns to the same parked record.
 
 ### Work-aware eligibility
 
