@@ -6,26 +6,41 @@
 }
 
 * { box-sizing: border-box; }
-html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #16151a; }
-#preview { position: fixed; inset: 0; display: grid; place-items: start center; overflow: hidden; cursor: pointer; }
+html, body { width: 100%; min-height: 100%; margin: 0; background: #16151a; }
+html { overflow-y: auto; }
+body { overflow: visible; }
+#preview { position: relative; width: 100%; min-height: 100vh; cursor: pointer; }
 #preview:focus-visible { outline: 4px solid var(--accent); outline-offset: -4px; }
 #snapshot {
+  display: block;
   width: 100%;
-  height: 100%;
-  object-fit: contain;
-  object-position: top center;
+  height: auto;
   background: #fff;
   image-rendering: auto;
 }
+#documentSurface { position: relative; width: 100%; min-height: 100vh; background: #fff; }
+#documentTiles { width: 100%; background: #fff; }
+#documentTiles canvas { display: block; width: 100%; height: auto; }
+#nestedRegions { position: absolute; inset: 0; pointer-events: none; }
+.frozen-scroll-region {
+  position: absolute;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  pointer-events: auto;
+  background: #fff;
+}
+.frozen-scroll-region canvas { display: block; width: 100%; height: auto; }
 #domSnapshot {
-  position: fixed;
-  inset: 0;
+  position: relative;
   width: 100%;
-  height: 100%;
+  min-height: 100vh;
   border: 0;
   background: #fff;
   pointer-events: none;
 }
+#domSnapshot[hidden] { display: none; }
 #missing { align-self: center; justify-self: center; max-width: 420px; padding: 36px; text-align: center; color: #e9e6f1; }
 #missing .moon { font-size: 58px; color: #9589ff; }
 #missing h1 { margin: 12px 0 8px; font-size: 24px; }

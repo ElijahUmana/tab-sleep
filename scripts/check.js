@@ -8,10 +8,11 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const manifest = JSON.parse(readFileSync(resolve(root, "manifest.json"), "utf8"));
 
 assert.equal(manifest.manifest_version, 3, "manifest_version must be 3");
+assert.equal(manifest.version, "4.2.1", "manifest version must force activation of the whole-page capture release");
 assert.equal(manifest.background.type, "module", "service worker must use ES modules");
 assert.deepEqual(
   manifest.permissions,
-  ["alarms", "contextMenus", "debugger", "scripting", "sessions", "storage", "tabs", "unlimitedStorage", "webRequest"],
+  ["alarms", "contextMenus", "debugger", "scripting", "storage", "tabs", "unlimitedStorage", "webRequest"],
   "permanent permissions changed unexpectedly"
 );
 assert.deepEqual(manifest.host_permissions, ["<all_urls>"], "capture coverage must remain all URLs");
@@ -38,7 +39,6 @@ const scripts = [
   "lib/policy.js",
   "lib/preview-store.js",
   "lib/rules.js",
-  "lib/sessions.js",
   "options/options.js",
   "popup/popup.js",
   "preview/preview.js",
@@ -51,8 +51,7 @@ const scripts = [
   "tests/policy.test.js",
   "tests/preview-store.test.js",
   "tests/engine.test.js",
-  "tests/rules.test.js",
-  "tests/sessions.test.js"
+  "tests/rules.test.js"
 ];
 const projectFiles = [...scripts, "README.md", ".gitignore"];
 for (const projectFile of projectFiles) {
@@ -102,7 +101,9 @@ const fullPageSource = readFileSync(resolve(root, "lib/full-page-capture.js"), "
 assert(fullPageSource.includes("chrome.debugger") || fullPageSource.includes("debugger.sendCommand"), "full-page capture must use the debugger protocol");
 assert(fullPageSource.includes("captureBeyondViewport"), "full-page capture must screenshot beyond the viewport");
 assert(fullPageSource.includes("detach"), "full-page capture must detach the debugger in a finally block");
-assert(fullPageSource.includes("clip:"), "tall pages must be captured as clipped vertical tiles");
+assert(fullPageSource.includes("screenshotParams(\"webp\", {"), "tall pages must be captured as clipped vertical tiles");
+assert(fullPageSource.includes("discoverNestedRegions"), "application scroll containers must be captured without site-name heuristics");
+assert(fullPageSource.includes("restoreNestedRegions"), "nested capture must restore every live scroll position");
 
 const previewHtml = readFileSync(resolve(root, "preview/preview.html"), "utf8");
 assert(previewHtml.includes('sandbox="allow-same-origin"'), "DOM snapshot iframe may expose its inert document for scroll restoration");
@@ -118,18 +119,17 @@ assert(previewJs.includes("event.isTrusted"), "tab activation/synthetic clicks a
 assert(previewJs.includes("scrollTo(record.scrollX"), "DOM previews must restore recorded scroll position");
 assert(!previewJs.includes("wakeButton"), "wake must not require a separate button");
 assert(previewJs.includes("renderTiledPreview"), "preview must render tiled full-page captures");
+assert(previewJs.includes("await renderNestedRegions(record)"), "single-bitmap document shells must still render captured nested scroll regions");
+assert(previewJs.includes("renderNestedRegions"), "preview must recreate nested scroll topology");
+const previewCss = readFileSync(resolve(root, "preview/preview.css"), "utf8");
+assert(previewCss.includes("#domSnapshot[hidden] { display: none; }"), "hidden DOM fallback must not create a blank tail below bitmap previews");
+assert(previewCss.includes("overflow-y: auto"), "frozen whole pages must remain vertically scrollable");
+assert(!previewCss.includes("#snapshot {\n  width: 100%;\n  height: 100%"), "full-page captures must never be flattened into one viewport");
 
 const bridgeSource = readFileSync(resolve(root, "content/page-activity-bridge.js"), "utf8");
 assert(bridgeSource.includes("ReadableStreamDefaultReader"), "streaming response consumption must be tracked");
 assert(bridgeSource.includes("STREAM_PROGRESS_GRACE_MS"), "stream progress must protect long responses");
 assert(bridgeSource.includes("REALTIME_BURST_THRESHOLD"), "realtime traffic must require an active message burst");
-
-const sessionsSource = readFileSync(resolve(root, "lib/sessions.js"), "utf8");
-assert(sessionsSource.includes("SESSION_HISTORY_LIMIT"), "session history must be capped");
-assert(sessionsSource.includes("previewToken"), "restores must prefer still-sleeping preview tokens over live URLs");
-const serviceWorkerSessions = readFileSync(resolve(root, "service-worker.js"), "utf8");
-assert(serviceWorkerSessions.includes("SESSIONS_EXPORT"), "service worker must route sessions export messages");
-assert(serviceWorkerSessions.includes("reconcileAfterRestart"), "sessions reconciliation must run on worker start");
 
 const readme = readFileSync(resolve(root, "README.md"), "utf8");
 assert(readme.includes("## Installation"), "README must include installation instructions");

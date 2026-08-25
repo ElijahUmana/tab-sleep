@@ -59,7 +59,7 @@ export function createFakeChrome(initialTabs = [], options = {}) {
     },
     scripting: {
       async executeScript(details) {
-        calls.executed.push(clone({ target: details.target, world: details.world, files: details.files, func: Boolean(details.func) }));
+        calls.executed.push(clone({ target: details.target, world: details.world, files: details.files, args: details.args, func: Boolean(details.func) }));
         // Real Chrome throws "Unexpected property" on unknown detail keys —
         // mirror that so tests catch invalid executeScript payloads.
         const allowed = ["target", "func", "args", "world", "files", "injectImmediately", "matchOriginAsFallback"];
@@ -74,6 +74,22 @@ export function createFakeChrome(initialTabs = [], options = {}) {
           const tab = tabs.find((item) => item.id === details.target.tabId);
           return [{ result: { html: `<html><body><h1>${tab?.title ?? "page"}</h1></body></html>`, title: tab?.title, scrollX: 0, scrollY: 0, width: 1280, height: 800, devicePixelRatio: 1 } }];
         }
+        if (Array.isArray(details.args) && details.args[0] === "__TAB_SLEEP_SCROLL_CAPTURE__") {
+          return [{ result: clone((options.nestedRegions ?? []).map((region, index) => ({
+            ...region,
+            marker: `${details.args[0]}-${index}`,
+            priorMarker: null,
+            originalScrollLeft: 0
+          }))) }];
+        }
+        if (Array.isArray(details.args) && typeof details.args[0] === "string" && details.args[0].startsWith("__TAB_SLEEP_SCROLL_CAPTURE__-") && Number.isFinite(details.args[1])) {
+          const regionIndex = Number(details.args[0].slice(details.args[0].lastIndexOf("-") + 1));
+          const region = options.nestedRegions?.[regionIndex];
+          if (!region) return [{ result: null }];
+          const scrollTop = Math.min(details.args[1], region.scrollHeight - region.viewportHeight);
+          return [{ result: { scrollTop, scrollHeight: region.scrollHeight } }];
+        }
+        if (Array.isArray(details.args) && Array.isArray(details.args[0])) return [{ result: null }];
         if (details.world === "MAIN") return [{ result: { busy: Boolean(signal?.remoteBusy), ready: signal?.bridgeReady !== false } }];
         // Mirrors content/activity.js. A tab whose tracker was never injected
         // (no signals entry at all) returns null — the real globalThis probe
@@ -97,7 +113,25 @@ export function createFakeChrome(initialTabs = [], options = {}) {
             cssVisualViewport: { clientWidth: 1280, clientHeight: 800 }
           });
         }
-        if (method === "Page.captureScreenshot") return { data: "QUJD" };
+        if (method === "Page.captureScreenshot") {
+          const marker = `${params?.format ?? "png"}:${params?.clip?.x ?? 0}:${params?.clip?.y ?? 0}:${params?.clip?.width ?? 0}:${params?.clip?.height ?? 0}`;
+          return { data: Buffer.from(marker).toString("base64") };
+        }
+        if (method === "Runtime.evaluate") {
+          const expression = String(params?.expression ?? "");
+          if (expression.includes("document.querySelectorAll('*')")) {
+            return { result: { value: clone(options.nestedRegions ?? []) } };
+          }
+          if (expression.includes("region.element.scrollTop")) {
+            const match = expression.match(/regions\?\.\[(\d+)\]/);
+            const region = options.nestedRegions?.[Number(match?.[1] ?? -1)];
+            const requested = Number(expression.match(/scrollTop = (\d+)/)?.[1] ?? 0);
+            if (!region) return { result: { value: null } };
+            const scrollTop = Math.min(requested, region.scrollHeight - region.viewportHeight);
+            return { result: { value: { scrollTop, scrollHeight: region.scrollHeight } } };
+          }
+          return { result: { value: true } };
+        }
         throw new Error(`Unhandled debugger command in fake: ${method}`);
       },
       async detach(target) {

@@ -4,6 +4,9 @@ const params = new URLSearchParams(location.search);
 const token = params.get("token");
 const preview = document.querySelector("#preview");
 const snapshot = document.querySelector("#snapshot");
+const documentSurface = document.querySelector("#documentSurface");
+const documentTiles = document.querySelector("#documentTiles");
+const nestedRegions = document.querySelector("#nestedRegions");
 const domSnapshot = document.querySelector("#domSnapshot");
 const meta = document.querySelector("#meta");
 const waking = document.querySelector("#waking");
@@ -24,44 +27,61 @@ async function reportReady(kind) {
   await chrome.runtime.sendMessage({ type: "PREVIEW_READY", token, kind });
 }
 
-// Full-page tiled capture: one canvas spanning the entire scrollable page,
-// backed by WebP tile Blobs delivered by PREVIEW_GET_RECORD. Tiles covering
-// the initially visible region decode before readiness; the remainder decode
-// in the background so a huge page still shows its top instantly.
-async function renderTiledPreview(record) {
-  const tileRecords = [...record.tiles].sort((a, b) => a.index - b.index);
-  if (!(record.width > 0)) {
-    const firstBitmap = await createImageBitmap(tileRecords[0].blob);
-    record.width = firstBitmap.width;
-    firstBitmap.close();
-  }
-  if (!(record.height > 0)) {
-    record.height = tileRecords.reduce((maximum, tile) => Math.max(maximum, tile.y + tile.height), 0);
-  }
-  snapshot.width = record.width;
-  snapshot.height = record.height;
-  const context = snapshot.getContext("2d", { alpha: false });
+async function paintBlobToCanvas(blob, width = null, height = null) {
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement("canvas");
+  canvas.width = width ?? bitmap.width;
+  canvas.height = height ?? bitmap.height;
+  const context = canvas.getContext("2d", { alpha: false });
   context.fillStyle = "#fff";
-  context.fillRect(0, 0, snapshot.width, snapshot.height);
-  const painted = new Set();
-  const paintTile = async (tile) => {
-    if (painted.has(tile.index)) return;
-    painted.add(tile.index);
-    const bitmap = await createImageBitmap(tile.blob);
-    context.drawImage(bitmap, 0, tile.y);
-    bitmap.close();
-  };
-  const firstTileHeight = tileRecords[0]?.height ?? FULL_TILE_FALLBACK_HEIGHT;
-  const eagerCount = Math.max(1, Math.ceil((record.viewportHeight ?? window.innerHeight) / firstTileHeight));
-  for (const tile of tileRecords.slice(0, Math.min(eagerCount, tileRecords.length))) {
-    await paintTile(tile);
-  }
-  void Promise.all(tileRecords.slice(eagerCount).map((tile) => paintTile(tile))).catch((error) => {
-    meta.textContent = `Frozen page is partially rendered: ${error.message}`;
-  });
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return canvas;
 }
 
-const FULL_TILE_FALLBACK_HEIGHT = 4_096;
+async function renderDocumentTiles(record) {
+  const tileRecords = [...record.tiles].sort((a, b) => a.index - b.index);
+  documentTiles.replaceChildren();
+  for (const tile of tileRecords) {
+    documentTiles.append(await paintBlobToCanvas(tile.blob, tile.width || record.width, tile.height));
+  }
+  documentTiles.hidden = false;
+  snapshot.hidden = true;
+}
+
+async function renderNestedRegions(record) {
+  nestedRegions.replaceChildren();
+  const scale = documentSurface.clientWidth / Math.max(1, record.width);
+  for (const region of record.nestedRegions ?? []) {
+    const tiles = (record.nestedTiles ?? []).filter((tile) => tile.regionIndex === region.index).sort((a, b) => a.index - b.index);
+    if (tiles.length === 0) continue;
+    const surface = document.createElement("div");
+    surface.className = "frozen-scroll-region";
+    surface.style.left = `${region.x * scale}px`;
+    surface.style.top = `${region.y * scale}px`;
+    surface.style.width = `${region.viewportWidth * scale}px`;
+    surface.style.height = `${region.viewportHeight * scale}px`;
+    const content = document.createElement("div");
+    content.style.position = "relative";
+    content.style.height = `${region.scrollHeight * scale}px`;
+    for (const tile of tiles) {
+      const canvas = await paintBlobToCanvas(tile.blob, tile.width || region.viewportWidth, tile.height);
+      canvas.style.position = "absolute";
+      canvas.style.left = "0";
+      canvas.style.top = `${tile.y * scale}px`;
+      content.append(canvas);
+    }
+    surface.append(content);
+    surface.scrollTop = region.originalScrollTop * scale;
+    nestedRegions.append(surface);
+  }
+}
+
+async function renderTiledPreview(record) {
+  await renderDocumentTiles(record);
+  await renderNestedRegions(record);
+}
 
 async function loadPreview() {
   if (!token) throw new Error("Missing preview token");
@@ -84,8 +104,9 @@ async function loadPreview() {
   record = {
     ...metadata,
     tiles: images.some((image) => image.kind === "tile")
-      ? images.map((image, index) => ({ index: image.tileIndex ?? index, y: image.yOffset ?? 0, height: image.height ?? 0, blob: image.blob, mime: image.mime }))
+      ? images.filter((image) => image.kind === "tile").map((image, index) => ({ index: image.tileIndex ?? index, y: image.yOffset ?? 0, width: image.width ?? metadata.width, height: image.height ?? 0, blob: image.blob, mime: image.mime }))
       : undefined,
+    nestedTiles: images.filter((image) => image.kind === "nested").map((image, index) => ({ regionIndex: image.regionIndex, index: image.tileIndex ?? index, y: image.yOffset ?? 0, width: image.width ?? 0, height: image.height ?? 0, blob: image.blob, mime: image.mime })),
     viewportImage: images.find((image) => image.kind === "viewport")?.blob ?? null
   };
 
@@ -100,7 +121,9 @@ async function loadPreview() {
     context.drawImage(bitmap, 0, 0);
     bitmap.close();
     snapshot.hidden = false;
+    documentTiles.hidden = true;
     domSnapshot.hidden = true;
+    await renderNestedRegions(record);
     meta.textContent = describeSnapshot(record.capturedAt);
     await reportReady("bitmap");
     return;
@@ -108,7 +131,6 @@ async function loadPreview() {
 
   if (Array.isArray(record.tiles) && record.tiles.length > 0) {
     await renderTiledPreview(record);
-    snapshot.hidden = false;
     domSnapshot.hidden = true;
     meta.textContent = describeSnapshot(record.capturedAt);
     await reportReady("tiles");
@@ -122,8 +144,16 @@ async function loadPreview() {
     });
     try {
       domSnapshot.contentWindow?.scrollTo(record.scrollX ?? 0, record.scrollY ?? 0);
+      const documentHeight = Math.max(
+        record.height ?? 0,
+        domSnapshot.contentDocument?.documentElement?.scrollHeight ?? 0,
+        domSnapshot.contentDocument?.body?.scrollHeight ?? 0,
+        window.innerHeight
+      );
+      domSnapshot.style.height = `${documentHeight}px`;
     } catch {}
     domSnapshot.hidden = false;
+    documentSurface.hidden = true;
     snapshot.hidden = true;
     meta.textContent = describeSnapshot(record.capturedAt);
     await reportReady("dom");

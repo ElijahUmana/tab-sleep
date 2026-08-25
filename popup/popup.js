@@ -9,7 +9,6 @@ const elements = {
   totalCount: document.querySelector("#totalCount"),
   sleepNow: document.querySelector("#sleepNow"),
   options: document.querySelector("#options"),
-  openSessions: document.querySelector("#openSessions"),
   whyAwakeToggle: document.querySelector("#whyAwakeToggle"),
   whyAwakePanel: document.querySelector("#whyAwakePanel"),
   freezeWindow: document.querySelector("#freezeWindow"),
@@ -194,21 +193,6 @@ elements.keepDomain.addEventListener("click", () =>
 
 elements.options.addEventListener("click", () => {
   void chrome.runtime.openOptionsPage();
-});
-
-// The Sessions section lives in Settings; deep-link by scrolling to it after
-// the options page opens.
-document.querySelector("#openSessions").addEventListener("click", async (event) => {
-  const button = event.currentTarget;
-  button.disabled = true;
-  try {
-    await chrome.storage.session.set({ openSessionsOnOptionsLoad: true });
-    await chrome.runtime.openOptionsPage();
-    window.close();
-  } catch (error) {
-    showMessage(error.message, "error");
-    button.disabled = false;
-  }
 });
 
 void refresh();

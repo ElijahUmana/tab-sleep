@@ -126,45 +126,8 @@
     </details>
 
     <section class="privacy">
-      <h2>How previews work</h2>
-      <p>When possible, Tab Sleep stores a full-resolution PNG of the last visible page. For never-visible background tabs, it creates a script-free best-effort DOM preview from a detached clone. Both stay local in this Chrome profile. Sleeping replaces the live website with a lightweight extension page; it does not discard that preview, so selecting the tab never reloads the original site.</p>
-    </section>
-
-    <section id="sessionsSection">
-      <div class="section-heading">
-        <div>
-          <h2>Sessions</h2>
-          <p>Named snapshots of your windows, groups, and tabs. Automatic snapshots are taken roughly every 10 minutes after tab changes.</p>
-        </div>
-        <button id="saveSession" type="button" class="text-button">Save current session</button>
-      </div>
-
-      <label class="field" for="sessionName">
-        <span>Session name</span>
-        <input id="sessionName" type="text" maxlength="80" placeholder="e.g. Weekly research">
-      </label>
-
-      <div class="sessions-toolbar">
-        <input id="historySearch" type="search" placeholder="Search sleep history…" aria-label="Search sleep history">
-      </div>
-
-      <ul id="sessionList" class="session-list"></ul>
-      <p id="sessionsEmpty" class="hint">No sessions yet. Save one above or wait for an automatic snapshot.</p>
-
-      <h3 class="sub-heading">Sleep history</h3>
-      <ul id="historyList" class="history-list" aria-live="polite"></ul>
-      <p id="historyEmpty" class="hint">Nothing in the history yet.</p>
-    </section>
-
-    <section id="transferSection">
-      <h2>Import &amp; export</h2>
-      <p class="section-copy">Sessions and settings as a JSON file. Settings also sync through Chrome when Chrome Sync is enabled; frozen previews always stay on this machine.</p>
-      <div class="transfer-row">
-        <button id="exportData" type="button" class="text-button">Export JSON</button>
-        <button id="importData" type="button" class="text-button">Import JSON…</button>
-        <input id="importFile" type="file" accept="application/json,.json" hidden>
-      </div>
-      <p id="recoveryNote" class="hint" hidden></p>
+      <h2>How frozen pages work</h2>
+      <p>Tab Sleep captures the entire scrollable page, including significant internal scroll regions used by web apps. The frozen result remains scrollable and local to this Chrome profile. Selecting the tab never reloads the site; click anywhere on the frozen page, or press Enter or Space, to wake it in the same tab.</p>
     </section>
 
     <footer>

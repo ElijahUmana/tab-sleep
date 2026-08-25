@@ -384,6 +384,67 @@ test("very tall page is captured as vertical WebP tiles with offsets", async () 
   }
 });
 
+test("Gmail-style nested scroller is stitched and live scroll position is restored", async () => {
+  const c = clock();
+  const nestedRegion = {
+    index: 0,
+    x: 220,
+    y: 140,
+    viewportWidth: 960,
+    viewportHeight: 500,
+    scrollWidth: 960,
+    scrollHeight: 1_400,
+    originalScrollTop: 175
+  };
+  const chrome = createFakeChrome([makeTab(1, { active: true }), makeTab(2)], {
+    signals: {
+      1: { visible: true },
+      2: { visible: false, localBusy: false, remoteBusy: false, bridgeReady: true }
+    },
+    pageLayout: { cssContentSize: { width: 1280, height: 800 }, cssVisualViewport: { clientWidth: 1280, clientHeight: 800 } },
+    nestedRegions: [nestedRegion]
+  });
+  const e = engine(chrome, c);
+  await e.start();
+  await e.handleSignal({ visible: false, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(2));
+  c.advance(120_000);
+  await e.handleSignal({ visible: false, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(2));
+  const nestedResult = await e.scan();
+  assert.deepEqual(nestedResult.frozen, [2], JSON.stringify(nestedResult));
+  const token = chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["2"].token;
+  const stored = await e.previewStore.getPreview(token);
+  assert.deepEqual(stored.metadata.nestedRegions, [nestedRegion]);
+  const nestedTiles = stored.images.filter((image) => image.kind === "nested");
+  assert.deepEqual(nestedTiles.map((tile) => tile.yOffset), [0, 500, 900]);
+  assert.equal(nestedTiles.every((tile) => tile.regionIndex === 0), true);
+  const restorationCalls = chrome.calls.executed.filter((call) => Array.isArray(call.args?.[0]));
+  assert.ok(restorationCalls.length > 0, "live nested scroll positions must be restored in finally");
+});
+
+test("freeze never reuses a cached visible viewport as the sleeping visual", async () => {
+  const c = clock();
+  const chrome = createFakeChrome([makeTab(1, { active: true }), makeTab(2)], {
+    signals: { 1: { visible: true }, 2: { visible: false, localBusy: false, remoteBusy: false, bridgeReady: true } },
+    pageLayout: { cssContentSize: { width: 1280, height: 7_000 }, cssVisualViewport: { clientWidth: 1280, clientHeight: 800 } }
+  });
+  const e = engine(chrome, c);
+  await e.start();
+  const staleToken = "viewport-only";
+  await e.previewStore.savePreview({ token: staleToken, tabId: 2, originalUrl: "https://example.com/tab-2", capturedAt: c.now(), images: [{ bytes: new Uint8Array([65, 66, 67]), mime: "image/png", kind: "viewport" }] });
+  const state = chrome.storage.session.data[RUNTIME_STATE_KEY];
+  state.captures["2"] = { token: staleToken, url: "https://example.com/tab-2", capturedAt: c.now(), hasImage: true };
+  await chrome.storage.session.set({ [RUNTIME_STATE_KEY]: state });
+  await e.handleSignal({ visible: false, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(2));
+  c.advance(120_000);
+  await e.handleSignal({ visible: false, busy: false, activity: false, bridgeReady: true }, await chrome.tabs.get(2));
+  const freshResult = await e.scan();
+  assert.deepEqual(freshResult.frozen, [2], JSON.stringify(freshResult));
+  const frozenToken = chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["2"].token;
+  assert.notEqual(frozenToken, staleToken);
+  const record = await e.previewStore.getPreview(frozenToken);
+  assert.ok(record.images.length > 1, "sleeping visual must contain the newly captured full-page tiles");
+});
+
 test("debugger-blocked page falls back and still freezes without scrolling or focusing", async () => {
   const c = clock(), chrome = createFakeChrome([makeTab(1, { active: true }), makeTab(2)], {
     signals: {

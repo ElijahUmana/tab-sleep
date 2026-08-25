@@ -93,17 +93,6 @@ Open **Tab Sleep → Settings** to configure:
 
 The popup also lets you protect the current page and manually freeze eligible inactive tabs. Manual freeze bypasses idle age only; it never bypasses visibility, work, media, loading, or visual-validity gates.
 
-## Sessions, history, and recovery
-
-The Settings page has a **Sessions** section (also reachable from the popup):
-
-- **Automatic snapshots** of every window and tab group are taken roughly every 10 minutes after tab changes. The last 20 are kept.
-- **Named sessions** capture the same snapshot under a name you choose; saving again with the same name updates it in place.
-- **Restore** a whole session, one window, one tab group, or a single tab. Entries whose frozen preview still exists reopen as sleeping preview pages instead of live websites; everything else reopens as a normal URL.
-- **Searchable history** records saves, snapshots, and restores (capped at 500 entries).
-- **Import/export** moves sessions plus settings as one JSON file. Settings sync through Chrome Sync when enabled; frozen previews never leave this machine.
-- A **recovery manifest** maps every parked tab to its original URL so tabs can be recovered after an update or restart even when runtime state was lost.
-
 ## Architecture
 
 ```text
@@ -132,7 +121,7 @@ preview/
   └─ click-anywhere wake surface
 ```
 
-Frozen preview image blobs live in IndexedDB with content-addressed deduplication and bounded per-tab/profile budgets. Runtime signals live in `chrome.storage.session`; settings, metrics, the preview index, session metadata, and durable wake transactions live in `chrome.storage.local`. Legacy Base64 previews migrate only when their exact token is opened or explicitly restored; extension startup never scans or decodes the old image store, regardless of profile size.
+Frozen preview image blobs live in IndexedDB with content-addressed deduplication and bounded per-tab/profile budgets. Runtime signals live in `chrome.storage.session`; settings, metrics, the preview index, and durable wake transactions live in `chrome.storage.local`. Legacy Base64 previews migrate only when their exact token is opened; extension startup never scans or decodes the old image store, regardless of profile size.
 
 ## Development
 
@@ -174,9 +163,9 @@ Check whether it is:
 
 The popup reports aggregate state, and `metrics.lastScanReasons` in extension local storage records the latest policy outcomes.
 
-### The frozen tab restores itself
+### A frozen visual is unavailable
 
-A broken or missing visual is treated as a failed freeze. Tab Sleep restores the original URL rather than leaving an unusable placeholder.
+The tab remains parked and never wakes from selection alone. Click anywhere on the parked page, or press Enter or Space, to wake the original URL explicitly.
 
 ### Extension context invalidated
 
@@ -191,7 +180,6 @@ The fallback is script-free and cannot exactly preserve every browser rendering 
 - `tabs`: tab metadata, navigation, and visible-tab capture
 - `scripting`: tracker injection, signal probes, and detached DOM fallback capture
 - `storage`: settings, runtime state, metrics, and local frozen visuals
-- `sessions`: session snapshots and sleep history records
 - `alarms`: periodic eligibility scans
 - `webRequest`: request lifecycle fences
 - `unlimitedStorage`: local preview records without the standard extension storage quota

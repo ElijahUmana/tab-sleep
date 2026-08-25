@@ -26,11 +26,8 @@ test("missing or stale signal fails safe", () => {
   assert.equal(getAwakeTabBlockReason(tab(), DEFAULT_SETTINGS, ready({ signals: {} }), now), "stale-signal");
   assert.equal(getAwakeTabBlockReason(tab(), DEFAULT_SETTINGS, ready({ signals: { "1": { at: now - 20_000, visible: false, busy: false, lastActivityAt: now - 200_000, bridgeReady: true } } }), now), "stale-signal");
 });
-test("stale bitmap snapshot fails safe; missing bitmap no longer blocks (DOM fallback)", () => {
-  // A bitmap older than the page's last activity must never be reused.
-  assert.equal(getAwakeTabBlockReason(tab(), DEFAULT_SETTINGS, ready({ signals: { "1": { at: now, visible: false, busy: false, lastActivityAt: now - 10_000, bridgeReady: true } }, captures: { "1": { url: "https://example.com", capturedAt: now - 20_000, hasImage: true } } }), now), "stale-snapshot");
-  // No bitmap at all is NOT a blocker anymore — freeze() serializes the exact
-  // DOM at that moment. This is what lets never-selected background tabs sleep.
+test("cached viewport age never blocks a fresh entire-page freeze", () => {
+  assert.equal(getAwakeTabBlockReason(tab(), DEFAULT_SETTINGS, ready({ signals: { "1": { at: now, visible: false, busy: false, lastActivityAt: now - 10_000, bridgeReady: true } }, captures: { "1": { url: "https://example.com", capturedAt: now - 20_000, hasImage: true } } }), now), null);
   assert.equal(getAwakeTabBlockReason(tab(), DEFAULT_SETTINGS, ready({ captures: {} }), now), null);
 });
 test("manual freeze bypasses age only", () => {

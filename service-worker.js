@@ -1,14 +1,10 @@
 import { TabSleepEngine } from "./lib/engine.js";
-import { PREVIEW_INDEX_KEY, RUNTIME_STATE_KEY, SESSIONS_SNAPSHOT_ALARM_NAME, SETTINGS_KEY } from "./lib/constants.js";
-import { SessionsManager, searchHistory } from "./lib/sessions.js";
+import { SETTINGS_KEY } from "./lib/constants.js";
 import { PreviewStore } from "./lib/preview-store.js";
 import { domainOf } from "./lib/policy.js";
 
-// One shared IndexedDB store: the engine writes/deletes frozen records,
-// sessions only consult token existence for still-sleeping restores.
 const previewStore = new PreviewStore({ legacyStorageArea: chrome.storage.local });
 const engine = new TabSleepEngine(chrome, undefined, undefined, { previewStore });
-const sessions = new SessionsManager(chrome, undefined, undefined, { previewStore });
 
 function run(label, operation) {
   void operation().catch((error) => {
@@ -17,30 +13,13 @@ function run(label, operation) {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  run("installation", () => startWithSessions());
+  run("installation", () => startEngine());
 });
 
-// Auto snapshots are debounced (~10 min cadence) and only fire when tab
-// topology actually changed since the last snapshot.
-function markSessionsDirty() {
-  sessions.markDirty();
-}
-
 let startupPromise = null;
-async function performStartWithSessions() {
-  await sessions.reconcileAfterRestart(async () => {
-    const [state, index] = await Promise.all([
-      chrome.storage.session.get(RUNTIME_STATE_KEY),
-      chrome.storage.local.get(PREVIEW_INDEX_KEY)
-    ]);
-    return { frozenTabs: state[RUNTIME_STATE_KEY]?.frozenTabs ?? {}, previewIndex: index[PREVIEW_INDEX_KEY] ?? {} };
-  });
-  await engine.start();
-}
-
-function startWithSessions() {
+function startEngine() {
   if (!startupPromise) {
-    startupPromise = performStartWithSessions().catch((error) => {
+    startupPromise = engine.start().catch((error) => {
       startupPromise = null;
       throw error;
     });
@@ -49,11 +28,11 @@ function startWithSessions() {
 }
 
 chrome.runtime.onStartup.addListener(() => {
-  run("startup", () => startWithSessions());
+  run("startup", () => startEngine());
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  run("alarm", () => alarm.name === SESSIONS_SNAPSHOT_ALARM_NAME ? sessions.takeAutoSnapshot() : engine.handleAlarm(alarm));
+  run("alarm", () => engine.handleAlarm(alarm));
 });
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
@@ -61,17 +40,14 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
 });
 
 chrome.tabs.onCreated.addListener((tab) => {
-  markSessionsDirty();
   run("tab creation", () => engine.handleCreated(tab));
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.url || changeInfo.status === "complete") markSessionsDirty();
   run("tab update", () => engine.handleUpdated(tabId, changeInfo, tab));
 });
 
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
-  markSessionsDirty();
   run("tab removal", () => engine.handleRemoved(tabId, removeInfo));
 });
 
@@ -193,33 +169,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function routeMessage(message, sender) {
-  if (message?.type?.startsWith("SESSIONS_")) return handleSessionsMessage(message);
   return engine.handleMessage(message, sender);
 }
 
-async function handleSessionsMessage(message) {
-  switch (message.type) {
-    case "SESSIONS_LIST": {
-      const [list, manifest] = await Promise.all([sessions.listSessions(), sessions.getRecoveryManifest()]);
-      return { sessions: list, recoveryUpdatedAt: manifest.updatedAt ?? null };
-    }
-    case "SESSIONS_SAVE_NAMED": return { session: await sessions.saveNamedSession(message.name) };
-    case "SESSIONS_DELETE": return sessions.deleteSession(message.sessionId);
-    case "SESSIONS_RESTORE_SESSION": return sessions.restoreSession(message.sessionId);
-    case "SESSIONS_RESTORE_WINDOW": return sessions.restoreWindow(message.sessionId, message.windowIndex);
-    case "SESSIONS_RESTORE_GROUP": return sessions.restoreGroup(message.sessionId, message.groupIndex);
-    case "SESSIONS_RESTORE_TAB": return sessions.restoreTab(message.sessionId, message.entryIndex);
-    case "SESSIONS_SEARCH_HISTORY": {
-      const storage = await sessions.readStorage();
-      return { history: searchHistory(storage.history, message.query) };
-    }
-    case "SESSIONS_EXPORT": return { payload: await sessions.exportAll() };
-    case "SESSIONS_IMPORT": return sessions.importAll(String(message.payloadText ?? ""));
-    case "SESSIONS_RECOVERY_MANIFEST": return { manifest: await sessions.getRecoveryManifest() };
-    case "SESSIONS_RECOVER_TAB": return sessions.recoverFromManifest(String(message.token ?? ""));
-    case "SESSIONS_SNAPSHOT_NOW": return { session: await sessions.takeAutoSnapshot() };
-    default: throw new Error(`Unknown Tab Sleep sessions message: ${message?.type ?? "missing"}`);
-  }
-}
-
-run("initialization", () => startWithSessions());
+run("initialization", () => startEngine());
