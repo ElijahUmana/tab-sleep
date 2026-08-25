@@ -10,69 +10,19 @@ Its eligibility engine protects visible windows, active media, meaningful networ
 
 ### Freeze pipeline
 
-```mermaid
-flowchart TB
-  Signals["1 · Runtime signals"]
-  Snapshot["2 · Fresh runtime snapshot"]
-  Policy["Ordered eligibility gates"]
-  Capture["3 · Whole-page CDP capture"]
-  Restore["Restore scroll state and markers"]
-  Gate{"Still eligible?"}
-  Commit["4 · Atomic IndexedDB commit"]
-
-  Signals --> Snapshot
-  Snapshot --> Policy
-  Policy -->|pass| Capture
-  Capture --> Restore
-  Restore --> Gate
-  Gate -->|yes| Commit
-```
+![Freeze transaction: runtime signals flow through policy, whole-page capture, restoration, commit-time revalidation, and atomic preview storage.](docs/diagrams/freeze-pipeline.svg)
 
 Runtime signals cover tab topology, trusted input, visibility, media, requests, consumed streams, and realtime traffic. Policy applies protection rules and the idle threshold. Capture produces document tiles and stitched nested-scroll surfaces before restoring every temporary change to the live page. Only then does commit-time revalidation permit the metadata, geometry, and deduplicated SHA-256 blobs to enter IndexedDB.
 
 ### Parked runtime and wake path
 
-```mermaid
-flowchart TB
-  Record["Content-addressed preview record"]
-  Parked["5 · Inert parked runtime"]
-  Gesture["Trusted wake gesture or command"]
-  Transaction["Persist WAKING transaction"]
-  Replace["Same-tab location.replace"]
-  Live["Live page commits and loads"]
-  Cleanup["Delete preview record"]
-
-  Record --> Parked
-  Parked --> Gesture
-  Gesture --> Transaction
-  Transaction --> Replace
-  Replace --> Live
-  Live --> Cleanup
-```
+![Parked runtime and wake path: inspection remains frozen while trusted intent creates a durable same-tab wake transaction.](docs/diagrams/parked-wake.svg)
 
 Selecting or scrolling the parked page remains inside `Parked`; the original renderer stays gone. Only a trusted click, Enter, Space, or explicit command enters the wake path. The durable transaction preserves the original URL before navigation, and cleanup waits until the live page completes loading.
 
 ### Freeze and wake state machine
 
-```mermaid
-flowchart TB
-  Awake["AWAKE"]
-  Candidate["CANDIDATE"]
-  Capturing["CAPTURING"]
-  Revalidating["REVALIDATING"]
-  Freezing["FREEZING"]
-  Sleeping["SLEEPING"]
-  Waking["WAKING"]
-  Restored["AWAKE · RESTORED"]
-
-  Awake --> Candidate
-  Candidate --> Capturing
-  Capturing --> Revalidating
-  Revalidating --> Freezing
-  Freezing --> Sleeping
-  Sleeping --> Waking
-  Waking --> Restored
-```
+![Transactional lifecycle from awake through capture and sleeping to same-tab restoration, with explicit recovery invariants.](docs/diagrams/lifecycle.svg)
 
 The diagram shows the successful transaction path without compressing recovery edges over its labels. Before `SLEEPING`, a failed gate, capture, or parked navigation returns to `AWAKE`. Selecting or scrolling stays in `SLEEPING`. An interrupted `WAKING` transition returns to `SLEEPING` with retry state intact; successful loading reaches `AWAKE · RESTORED` and deletes the preview.
 

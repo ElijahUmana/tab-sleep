@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">Tab Sleep lifecycle</title>
+  <desc id="desc">The successful lifecycle progresses from awake through capture and sleeping to restored, with failure and interruption recovery rules listed below.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0b1220"/><stop offset="1" stop-color="#111c31"/></linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0 0L10 5L0 10Z" fill="#79c0ff"/></marker>
+    <style>
+      .title{font:700 34px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#f0f6fc;letter-spacing:1px}.subtitle{font:400 21px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#9fb3c8}.label{font:700 19px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#f0f6fc;text-anchor:middle}.detail{font:400 19px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#b8c7d9}.edge{stroke:#79c0ff;stroke-width:4;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect x="4" y="4" width="1192" height="512" rx="28" fill="url(#bg)" stroke="#2f81f7" stroke-width="4"/>
+  <text x="55" y="58" class="title">TRANSACTIONAL LIFECYCLE</text>
+  <text x="55" y="91" class="subtitle">Successful path</text>
+
+  <g>
+    <rect x="45" y="130" width="130" height="70" rx="16" fill="#173a31" stroke="#3fb950" stroke-width="3"/><text x="110" y="172" class="label">AWAKE</text>
+    <path d="M175 165H202" class="edge"/>
+    <rect x="210" y="130" width="140" height="70" rx="16" fill="#17233a" stroke="#58a6ff" stroke-width="3"/><text x="280" y="172" class="label">CANDIDATE</text>
+    <path d="M350 165H377" class="edge"/>
+    <rect x="385" y="130" width="145" height="70" rx="16" fill="#17233a" stroke="#58a6ff" stroke-width="3"/><text x="457" y="172" class="label">CAPTURING</text>
+    <path d="M530 165H557" class="edge"/>
+    <rect x="565" y="130" width="170" height="70" rx="16" fill="#29223d" stroke="#bc8cff" stroke-width="3"/><text x="650" y="172" class="label">REVALIDATING</text>
+    <path d="M735 165H762" class="edge"/>
+    <rect x="770" y="130" width="130" height="70" rx="16" fill="#29223d" stroke="#bc8cff" stroke-width="3"/><text x="835" y="172" class="label">FREEZING</text>
+    <path d="M900 165H927" class="edge"/>
+    <rect x="935" y="130" width="130" height="70" rx="16" fill="#211d38" stroke="#bc8cff" stroke-width="3"/><text x="1000" y="172" class="label">SLEEPING</text>
+  </g>
+
+  <path d="M1000 200V247H870" class="edge"/>
+  <rect x="700" y="220" width="160" height="70" rx="16" fill="#17233a" stroke="#58a6ff" stroke-width="3"/><text x="780" y="262" class="label">WAKING</text>
+  <path d="M700 255H655" class="edge"/>
+  <rect x="430" y="220" width="215" height="70" rx="16" fill="#173a31" stroke="#3fb950" stroke-width="3"/><text x="537" y="251" class="label">AWAKE</text><text x="537" y="275" class="label">RESTORED</text>
+
+  <line x1="55" y1="340" x2="1145" y2="340" stroke="#303f55" stroke-width="2"/>
+  <text x="55" y="385" class="detail">• Any failed eligibility gate, capture, or parked navigation returns to AWAKE.</text>
+  <text x="55" y="425" class="detail">• Selecting or scrolling is a SLEEPING self-transition; it never wakes the application.</text>
+  <text x="55" y="465" class="detail">• An interrupted wake returns to SLEEPING with durable retry state intact.</text>
+</svg>
