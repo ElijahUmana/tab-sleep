@@ -12,37 +12,37 @@ Its eligibility engine protects visible windows, active media, meaningful networ
 
 ```mermaid
 flowchart TB
-  Signals["1 · LIVE RUNTIME SIGNALS<br/>tab topology · input · media · network"]
-  Decision["2 · FRESH SNAPSHOT + ORDERED POLICY<br/>visibility · work · rules · idle threshold"]
-  Capture["3 · CDP WHOLE-PAGE CAPTURE<br/>document tiles · nested-scroll stitching"]
-  Restore["RESTORE LIVE PAGE<br/>scroll positions · temporary markers"]
-  Gate{"COMMIT-TIME<br/>REVALIDATION"}
-  Commit["4 · ATOMIC INDEXEDDB COMMIT<br/>geometry · SHA-256 blobs · LRU budgets"]
+  Signals["1 · Runtime signals"]
+  Snapshot["2 · Fresh runtime snapshot"]
+  Policy["Ordered eligibility gates"]
+  Capture["3 · Whole-page CDP capture"]
+  Restore["Restore scroll state and markers"]
+  Gate{"Still eligible?"}
+  Commit["4 · Atomic IndexedDB commit"]
 
-  Signals --> Decision
-  Decision -->|eligible| Capture
+  Signals --> Snapshot
+  Snapshot --> Policy
+  Policy -->|pass| Capture
   Capture --> Restore
   Restore --> Gate
-  Gate -->|still eligible| Commit
+  Gate -->|yes| Commit
 ```
 
-Runtime evidence enters policy, capture obtains the complete visual state, and the final eligibility gate runs only after capture has restored every temporary change to the live page.
+Runtime signals cover tab topology, trusted input, visibility, media, requests, consumed streams, and realtime traffic. Policy applies protection rules and the idle threshold. Capture produces document tiles and stitched nested-scroll surfaces before restoring every temporary change to the live page. Only then does commit-time revalidation permit the metadata, geometry, and deduplicated SHA-256 blobs to enter IndexedDB.
 
 ### Parked runtime and wake path
 
 ```mermaid
 flowchart TB
-  Store["CONTENT-ADDRESSED PREVIEW RECORD<br/>metadata + geometry · deduplicated image blobs"]
-  Parked["5 · INERT PARKED RUNTIME<br/>natural-height tiles · independent frozen regions"]
-  Inspect["SELECT OR SCROLL<br/>remain frozen · original renderer stays gone"]
-  Gesture["TRUSTED WAKE<br/>click · Enter · Space · explicit command"]
-  Transaction["DURABLE WAKING TRANSACTION<br/>persist original URL before navigation"]
-  Replace["SAME-TAB location.replace"]
-  Live["LIVE PAGE COMMITS AND LOADS"]
-  Cleanup["DELETE PREVIEW RECORD"]
+  Record["Content-addressed preview record"]
+  Parked["5 · Inert parked runtime"]
+  Gesture["Trusted wake gesture or command"]
+  Transaction["Persist WAKING transaction"]
+  Replace["Same-tab location.replace"]
+  Live["Live page commits and loads"]
+  Cleanup["Delete preview record"]
 
-  Store --> Parked
-  Parked --> Inspect
+  Record --> Parked
   Parked --> Gesture
   Gesture --> Transaction
   Transaction --> Replace
@@ -50,32 +50,31 @@ flowchart TB
   Live --> Cleanup
 ```
 
-The parked runtime reads immutable IndexedDB records without retaining the original renderer. Inspection never crosses into the wake path; only a trusted gesture or explicit command creates the durable transaction and restores the application.
+Selecting or scrolling the parked page remains inside `Parked`; the original renderer stays gone. Only a trusted click, Enter, Space, or explicit command enters the wake path. The durable transaction preserves the original URL before navigation, and cleanup waits until the live page completes loading.
 
 ### Freeze and wake state machine
 
 ```mermaid
-stateDiagram-v2
-  direction TB
+flowchart TB
+  Awake["AWAKE"]
+  Candidate["CANDIDATE"]
+  Capturing["CAPTURING"]
+  Revalidating["REVALIDATING"]
+  Freezing["FREEZING"]
+  Sleeping["SLEEPING"]
+  Waking["WAKING"]
+  Restored["AWAKE · RESTORED"]
 
-  [*] --> Awake
-  Awake --> Candidate: idle complete
-  Candidate --> Capturing: gates pass
-  Capturing --> Revalidating: capture complete
-  Revalidating --> Freezing: still eligible
-  Freezing --> Sleeping: preview painted
-  Sleeping --> Waking: trusted wake
-  Waking --> Awake: live load complete
-
-  Candidate --> Awake: blocked
-  Capturing --> Awake: capture aborts
-  Revalidating --> Awake: gate fails
-  Freezing --> Awake: park fails
-  Sleeping --> Sleeping: inspect
-  Waking --> Sleeping: interrupted
+  Awake --> Candidate
+  Candidate --> Capturing
+  Capturing --> Revalidating
+  Revalidating --> Freezing
+  Freezing --> Sleeping
+  Sleeping --> Waking
+  Waking --> Restored
 ```
 
-Selection is intentionally a self-transition in `Sleeping`: it changes browser focus but not application execution. Preview cleanup occurs only after the original page completes loading, so an interrupted wake returns to the same parked record.
+The diagram shows the successful transaction path without compressing recovery edges over its labels. Before `SLEEPING`, a failed gate, capture, or parked navigation returns to `AWAKE`. Selecting or scrolling stays in `SLEEPING`. An interrupted `WAKING` transition returns to `SLEEPING` with retry state intact; successful loading reaches `AWAKE · RESTORED` and deletes the preview.
 
 ### Work-aware eligibility
 
