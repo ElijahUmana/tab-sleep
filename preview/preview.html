@@ -13,6 +13,13 @@
       <div id="documentTiles" hidden aria-label="Frozen full-page tiles"></div>
       <div id="nestedRegions" aria-label="Frozen scrollable page regions"></div>
     </div>
+    <section id="missing" hidden aria-labelledby="missingTitle">
+      <div class="moon" aria-hidden="true"></div>
+      <p class="eyebrow">Frozen visual unavailable</p>
+      <h1 id="missingTitle">This tab is still asleep</h1>
+      <p id="missingSite">Its saved image is no longer available.</p>
+      <strong>Click anywhere to restore the live page</strong>
+    </section>
     <iframe id="domSnapshot" hidden sandbox="allow-same-origin" referrerpolicy="no-referrer" title="Frozen page content"></iframe>
   </main>
   <div id="wakeBar" role="status" aria-live="polite">

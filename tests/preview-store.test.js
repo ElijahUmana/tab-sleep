@@ -92,6 +92,53 @@ test("oversized single capture fails loudly instead of truncating", async () => 
   await assert.rejects(() => store.savePreview(viewportPreview()), /exceeds per-tab limit/);
 });
 
+test("savePreview rejects metadata-only rows that would render white", async () => {
+  const store = makeStore();
+  await assert.rejects(
+    () => store.savePreview({ token: "white-page", originalUrl: "https://example.com/white", images: [] }),
+    /no durable visual/
+  );
+  assert.equal(await store.getMetadata("white-page"), null);
+});
+
+test("markFrozen preserves every visual reference", async () => {
+  const store = makeStore();
+  await store.savePreview(viewportPreview({
+    images: [
+      { bytes: dataUrlToBytes(PNG_A), mime: "image/png", kind: "viewport" },
+      { bytes: dataUrlToBytes(PNG_B), mime: "image/png", kind: "nested", regionIndex: 0, tileIndex: 0, yOffset: 0, width: 800, height: 600 }
+    ]
+  }));
+  const before = await store.getMetadata("token-a");
+  await store.markFrozen("token-a", 2_000);
+  const after = await store.getMetadata("token-a");
+  assert.equal(after.frozenAt, 2_000);
+  assert.deepEqual(after.images, before.images);
+  assert.equal((await store.getPreview("token-a")).images.length, 2);
+});
+
+test("budget cleanup never evicts protected parked previews", async () => {
+  const protectedTokens = new Set(["parked"]);
+  const store = makeStore({ profileBudgetBytes: 7, perTabLimitBytes: 100, protectedTokensProvider: () => protectedTokens });
+  await store.savePreview(viewportPreview({ token: "parked", tabId: 1, capturedAt: 100 }));
+  await store.savePreview(viewportPreview({ token: "disposable", tabId: 2, capturedAt: 200 }));
+  await store.savePreview(viewportPreview({ token: "incoming", tabId: 3, capturedAt: 300 }));
+  const tokens = (await store.listMetadata()).map((record) => record.token).sort();
+  assert.deepEqual(tokens, ["incoming", "parked"]);
+  assert.ok(await store.getPreview("parked"), "open parked visual must survive budget pressure");
+});
+
+test("budget fails instead of deleting protected previews when no disposable record can make room", async () => {
+  const protectedTokens = new Set(["parked"]);
+  const store = makeStore({ profileBudgetBytes: 5, perTabLimitBytes: 100, protectedTokensProvider: () => protectedTokens });
+  await store.savePreview(viewportPreview({ token: "parked", tabId: 1, capturedAt: 100 }));
+  await assert.rejects(
+    () => store.savePreview(viewportPreview({ token: "incoming", tabId: 2, capturedAt: 200 })),
+    /Profile preview budget/
+  );
+  assert.ok(await store.getPreview("parked"));
+});
+
 test("legacy preview migrates only when its exact token is opened", async () => {
   const backing = new Map([[`${PREVIEW_KEY_PREFIX}legacy-on-demand`, {
     token: "legacy-on-demand",
@@ -185,6 +232,17 @@ test("reconciliation drops rows with missing blobs and unreachable tokens, prune
   db.data.get(BLOB_STORE).delete(live.images[0].contentHash);
   const repaired = await store.reconcile(new Set(["live"]));
   assert.equal(repaired.droppedOrphans, 1, "row with missing blob is dropped rather than served broken");
+});
+
+test("reconciliation serializes with concurrent saves", async () => {
+  const store = makeStore();
+  await store.savePreview(viewportPreview({ token: "existing" }));
+  await Promise.all([
+    store.savePreview(viewportPreview({ token: "incoming", capturedAt: 2_000 })),
+    store.reconcile(new Set(["existing", "incoming"]))
+  ]);
+  assert.ok(await store.getPreview("existing"));
+  assert.ok(await store.getPreview("incoming"));
 });
 
 test("getPreview returns null for missing tokens and broken records instead of partial data", async () => {

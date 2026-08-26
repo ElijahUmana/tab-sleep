@@ -7,6 +7,8 @@ const snapshot = document.querySelector("#snapshot");
 const documentSurface = document.querySelector("#documentSurface");
 const documentTiles = document.querySelector("#documentTiles");
 const nestedRegions = document.querySelector("#nestedRegions");
+const missing = document.querySelector("#missing");
+const missingSite = document.querySelector("#missingSite");
 const domSnapshot = document.querySelector("#domSnapshot");
 const meta = document.querySelector("#meta");
 const waking = document.querySelector("#waking");
@@ -163,6 +165,18 @@ async function loadPreview() {
   throw new Error("Frozen visual is unavailable");
 }
 
+function showMissingPreview(error) {
+  documentSurface.hidden = true;
+  domSnapshot.hidden = true;
+  missing.hidden = false;
+  document.body.classList.add("preview-missing");
+  const savedTitle = record?.title && record.title !== "Sleeping tab" ? record.title : null;
+  missingSite.textContent = savedTitle
+    ? `The saved image for ${savedTitle} is no longer available.`
+    : "The saved image for this page is no longer available.";
+  meta.textContent = `Click anywhere to wake · ${error.message}`;
+}
+
 async function wake() {
   if (wakingNow) return;
   wakingNow = true;
@@ -215,8 +229,8 @@ async function loadWhenVisible() {
 }
 
 void loadWhenVisible().catch((error) => {
-  record = { title: "Sleeping tab", capturedAt: null };
-  document.title = "💤 Sleeping tab";
-  meta.textContent = `Frozen preview unavailable · Click to wake · ${error.message}`;
+  record = record ?? { title: "Sleeping tab", capturedAt: null };
+  document.title = `💤 ${record.title || "Sleeping tab"}`;
+  showMissingPreview(error);
   void chrome.runtime.sendMessage({ type: "PREVIEW_FAILED", token, error: error.message }).catch(() => {});
 });

@@ -8,7 +8,7 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const manifest = JSON.parse(readFileSync(resolve(root, "manifest.json"), "utf8"));
 
 assert.equal(manifest.manifest_version, 3, "manifest_version must be 3");
-assert.equal(manifest.version, "4.2.1", "manifest version must force activation of the whole-page capture release");
+assert.equal(manifest.version, "4.2.2", "manifest version must activate the frozen-preview retention repair");
 assert.equal(manifest.background.type, "module", "service worker must use ES modules");
 assert.deepEqual(
   manifest.permissions,
@@ -81,7 +81,7 @@ assert(serviceWorkerSource.includes("sendResponse"), "async runtime messages mus
 assert(serviceWorkerSource.includes("return true"), "async runtime messages must keep the response channel open");
 
 const engineSource = readFileSync(resolve(root, "lib/engine.js"), "utf8");
-assert(engineSource.includes("captureVisibleTab"), "engine must capture a frozen preview");
+assert(!engineSource.includes("captureVisibleTab"), "awake viewport screenshots must never consume durable preview storage");
 assert(!engineSource.includes("tabs.discard"), "preview pages must stay loaded so selection shows the frozen visual without reloading");
 assert(engineSource.includes("pendingUrl ?? tab.url"), "freeze navigation must tolerate pre-commit URLs");
 assert(engineSource.includes("liveToken === frozen.token"), "stale tab updates must not delete frozen records");
@@ -92,6 +92,8 @@ assert(engineSource.includes("captureDomSnapshot"), "engine must fall back to an
 assert(engineSource.includes("captureFullPage"), "engine must attempt an entire-scrollable-page capture before falling back");
 
 const previewStoreSource = readFileSync(resolve(root, "lib/preview-store.js"), "utf8");
+assert(previewStoreSource.includes("markFrozen"), "freeze timestamps must update metadata without replacing visual references");
+assert(previewStoreSource.includes("protectedTokensProvider"), "budget cleanup must protect open and waking preview records");
 assert(previewStoreSource.includes("migrateLegacyToken"), "legacy previews must migrate one named token on demand");
 assert(previewStoreSource.includes("storageArea.getKeys()"), "explicit legacy maintenance must enumerate keys without materializing all storage");
 assert(!previewStoreSource.includes("storageArea.get(null)"), "legacy preview migration must never read the complete storage area into memory");
@@ -121,8 +123,11 @@ assert(!previewJs.includes("wakeButton"), "wake must not require a separate butt
 assert(previewJs.includes("renderTiledPreview"), "preview must render tiled full-page captures");
 assert(previewJs.includes("await renderNestedRegions(record)"), "single-bitmap document shells must still render captured nested scroll regions");
 assert(previewJs.includes("renderNestedRegions"), "preview must recreate nested scroll topology");
+assert(previewJs.includes("showMissingPreview(error)"), "damaged frozen records must render an explicit recovery surface");
 const previewCss = readFileSync(resolve(root, "preview/preview.css"), "utf8");
 assert(previewCss.includes("#domSnapshot[hidden] { display: none; }"), "hidden DOM fallback must not create a blank tail below bitmap previews");
+assert(previewCss.includes("#missing[hidden] { display: none; }"), "hidden recovery surface must not cover valid frozen previews");
+assert(previewCss.includes("body.preview-missing"), "damaged frozen records must never render as a white page");
 assert(previewCss.includes("overflow-y: auto"), "frozen whole pages must remain vertically scrollable");
 assert(!previewCss.includes("#snapshot {\n  width: 100%;\n  height: 100%"), "full-page captures must never be flattened into one viewport");
 

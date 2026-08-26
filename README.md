@@ -314,4 +314,4 @@ MIT License. See [LICENSE](LICENSE).
 
 ## Version
 
-Current version: **4.2.1**
+Current version: **4.2.2**

@@ -41,10 +41,49 @@ body { overflow: visible; }
   pointer-events: none;
 }
 #domSnapshot[hidden] { display: none; }
-#missing { align-self: center; justify-self: center; max-width: 420px; padding: 36px; text-align: center; color: #e9e6f1; }
-#missing .moon { font-size: 58px; color: #9589ff; }
-#missing h1 { margin: 12px 0 8px; font-size: 24px; }
-#missing p { margin: 0; color: #aaa5b7; line-height: 1.5; }
+#missing[hidden] { display: none; }
+body.preview-missing { overflow: hidden; background: #0d0c13; }
+body.preview-missing #preview {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, #3b326b52 0, transparent 34%),
+    linear-gradient(145deg, #16131f, #09080d 72%);
+}
+#missing {
+  z-index: 1;
+  width: min(560px, calc(100vw - 48px));
+  padding: 48px;
+  border: 1px solid #ffffff1f;
+  border-radius: 28px;
+  background: #17141fd9;
+  box-shadow: 0 24px 80px #0009;
+  color: #f4f1fb;
+  text-align: center;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+#missing .moon {
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 24px;
+  border-radius: 50%;
+  background: #a99fff;
+  box-shadow: inset 21px -8px 0 3px #17141f, 0 0 48px #7c6cff66;
+}
+#missing .eyebrow {
+  margin: 0;
+  color: #a99fff;
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+#missing h1 { margin: 10px 0 12px; font-size: clamp(28px, 5vw, 40px); line-height: 1.1; }
+#missing p { margin: 0 auto; max-width: 420px; color: #bcb6c8; font-size: 16px; line-height: 1.55; }
+#missing strong { display: block; margin-top: 28px; color: #f4f1fb; font-size: 15px; }
 
 #wakeBar {
   pointer-events: none;

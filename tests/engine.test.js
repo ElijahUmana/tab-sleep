@@ -34,7 +34,7 @@ async function makeReady(e, chrome, c, id, { busy = false } = {}) {
   chrome.signals.set(id, { visible: false, localBusy: busy, remoteBusy: false, bridgeReady: true });
   await e.handleSignal({ visible: false, busy, activity: false, bridgeReady: true }, await chrome.tabs.get(id));
   const state = chrome.storage.session.data[RUNTIME_STATE_KEY];
-  state.signals[String(id)].lastActivityAt = state.captures[String(id)].capturedAt;
+  state.signals[String(id)].lastActivityAt = c.now();
   await chrome.storage.session.set({ [RUNTIME_STATE_KEY]: state });
 }
 test("engine startup never enumerates or decodes legacy preview payloads", async () => {
@@ -67,6 +67,57 @@ test("engine startup never enumerates or decodes legacy preview payloads", async
 
   assert.equal(getKeysCalls, 0, "startup must not enumerate legacy preview keys");
   assert.equal(legacyReads, 0, "startup must not materialize legacy preview payloads");
+});
+
+test("startup preserves open parked records and removes leaked awake records", async () => {
+  const c = clock();
+  const parkedToken = "parked-token";
+  const leakedToken = "leaked-awake-token";
+  const previewUrl = `chrome-extension://tab-sleep-test/preview/preview.html?token=${parkedToken}`;
+  const chrome = createFakeChrome([
+    makeTab(1, { url: previewUrl }),
+    makeTab(2, { active: true })
+  ], {
+    signals: { 2: { visible: true } },
+    local: {
+      [`preview:${leakedToken}`]: { token: leakedToken, imageDataUrl: "data:image/png;base64,AAAA" },
+      previewIndex: {
+        [parkedToken]: { tabId: 1, originalUrl: "https://example.com/parked", updatedAt: c.now() },
+        [leakedToken]: { tabId: 2, originalUrl: "https://example.com/tab-2", updatedAt: c.now() }
+      }
+    }
+  });
+  const previewStore = new PreviewStore({ indexedDb: new FakeIndexedDbFactory() });
+  await previewStore.savePreview({ token: parkedToken, tabId: 1, originalUrl: "https://example.com/parked", title: "Parked", capturedAt: c.now(), images: [{ bytes: new Uint8Array([1, 2, 3]), mime: "image/png", kind: "viewport" }] });
+  await previewStore.savePreview({ token: leakedToken, tabId: 2, originalUrl: "https://example.com/tab-2", title: "Leaked", capturedAt: c.now(), images: [{ bytes: new Uint8Array([4, 5, 6]), mime: "image/png", kind: "viewport" }] });
+  const e = new TabSleepEngine(chrome, c.now, () => "unused", { previewStore });
+  if (chrome.testOptions) chrome.testOptions.engineRef = { current: e };
+
+  await e.start();
+
+  assert.ok(await previewStore.getPreview(parkedToken));
+  assert.equal(await previewStore.getPreview(leakedToken), null);
+  assert.deepEqual(Object.keys(chrome.storage.local.data.previewIndex), [parkedToken]);
+  assert.equal(chrome.storage.local.data[`preview:${leakedToken}`], undefined);
+});
+
+test("in-flight capture tokens are protected before preview navigation", async () => {
+  const c = clock(), chrome = createFakeChrome([makeTab(1, { active: true })]);
+  const e = engine(chrome, c);
+  await e.start();
+  e.inFlightPreviewTokens.add("capturing-token");
+  assert.deepEqual(await e.protectedPreviewTokens(), new Set(["capturing-token"]));
+});
+
+test("preview index mutations serialize without losing entries", async () => {
+  const c = clock(), chrome = createFakeChrome([makeTab(1, { active: true })]);
+  const e = engine(chrome, c);
+  await e.start();
+  await Promise.all([
+    e.mutateIndex(async (index) => { await new Promise((resolve) => setTimeout(resolve, 5)); index.one = { tabId: 1 }; }),
+    e.mutateIndex((index) => { index.two = { tabId: 2 }; })
+  ]);
+  assert.deepEqual(Object.keys(chrome.storage.local.data.previewIndex).sort(), ["one", "two"]);
 });
 
 test("three tiled visible active tabs never freeze", async () => {
@@ -188,8 +239,20 @@ test("selected tab of a minimized window may sleep; of open window never", async
 test("missing tracker signal fails safe", async () => {
   const c=clock(), chrome=createFakeChrome([makeTab(1,{active:true}),makeTab(2)], { signals:{1:{trackerReady:false,bridgeReady:false}} }); const e=engine(chrome,c); await e.start(); c.advance(600_000); assert.deepEqual((await e.scan()).frozen,[]);
 });
-test("visible activity invalidates old snapshot", async () => {
-  const c=clock(), chrome=createFakeChrome([makeTab(1,{active:true})]); const e=engine(chrome,c); await e.start(); chrome.signals.set(1,{visible:true,localBusy:false,remoteBusy:false,bridgeReady:true}); await e.handleSignal({visible:true,busy:false,activity:false,bridgeReady:true},await chrome.tabs.get(1)); const before=chrome.storage.session.data[RUNTIME_STATE_KEY].captures["1"]?.capturedAt; c.advance(1_000); chrome.signals.set(1,{visible:false,localBusy:false,remoteBusy:false,bridgeReady:true}); await e.handleSignal({visible:false,busy:false,activity:true,bridgeReady:true},await chrome.tabs.get(1)); const state=chrome.storage.session.data[RUNTIME_STATE_KEY]; assert.equal(state.captures["1"],undefined); assert.ok(before);
+test("visible activity resets idle state without storing a preview", async () => {
+  const c=clock(), chrome=createFakeChrome([makeTab(1,{active:true})]);
+  const e=engine(chrome,c);
+  await e.start();
+  chrome.signals.set(1,{visible:true,localBusy:false,remoteBusy:false,bridgeReady:true});
+  await e.handleSignal({visible:true,busy:false,activity:false,bridgeReady:true},await chrome.tabs.get(1));
+  assert.equal((await e.previewStore.usage()).previews,0,"awake tabs must not create durable preview rows");
+  c.advance(1_000);
+  chrome.signals.set(1,{visible:false,localBusy:false,remoteBusy:false,bridgeReady:true});
+  await e.handleSignal({visible:false,busy:false,activity:true,bridgeReady:true},await chrome.tabs.get(1));
+  const state=chrome.storage.session.data[RUNTIME_STATE_KEY];
+  assert.equal(state.captures["1"],undefined);
+  assert.equal(state.inactiveSince["1"],c.now());
+  assert.equal((await e.previewStore.usage()).previews,0);
 });
 test("intermediate old-URL update cannot delete a freezing preview record", async () => {
   const c=clock(), chrome=createFakeChrome([makeTab(1)]); const e=engine(chrome,c); await e.start();
@@ -491,6 +554,29 @@ test("huge page refuses tiled capture cleanly and still freezes via DOM fallback
   const token = chrome.storage.session.data[RUNTIME_STATE_KEY].frozenTabs["2"].token;
   const record = await e.previewStore.getMetadata(token);
   assert.ok(typeof record.html === "string" && record.html.includes("Tab 2"));
+});
+
+test("concurrent wake requests create one durable transaction monitor", async () => {
+  const c = clock(), chrome = createFakeChrome([makeTab(1)]);
+  const e = engine(chrome, c);
+  await e.start();
+  const token = "wake-race-token", previewUrl = `chrome-extension://tab-sleep-test/preview/preview.html?token=${token}`;
+  await seedPreview(e.previewStore, token, { capturedAt: c.now() });
+  const state = chrome.storage.session.data[RUNTIME_STATE_KEY];
+  state.frozenTabs["1"] = { token, originalUrl: "https://example.com/tab-1", status: "sleeping", verifiedSleeping: true };
+  await chrome.storage.session.set({ [RUNTIME_STATE_KEY]: state });
+  await chrome.tabs.update(1, { url: previewUrl });
+  let monitorCalls = 0;
+  e.monitorWakeTransaction = async () => { monitorCalls++; };
+
+  const [first, second] = await Promise.all([
+    e.beginWake(token, await chrome.tabs.get(1)),
+    e.beginWake(token, await chrome.tabs.get(1))
+  ]);
+
+  assert.deepEqual(first, second);
+  assert.equal(monitorCalls, 1);
+  assert.equal(chrome.storage.local.data.wakeTransactions["1"].token, token);
 });
 
 test("wake records durable intent first and deletes the record only after commit", async () => {

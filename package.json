@@ -1,6 +1,6 @@
 {
   "name": "tab-sleep",
-  "version": "4.2.1",
+  "version": "4.2.2",
   "description": "Work-aware Chrome tab runtime with scrollable whole-page frozen previews.",
   "private": true,
   "license": "MIT",
